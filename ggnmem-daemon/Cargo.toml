@@ -1,0 +1,25 @@
+[package]
+name = "ggnmem-daemon"
+description = "Background daemon scaffold for ggnmem."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bincode.workspace = true
+ggnmem-db = { path = "../ggnmem-db" }
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
