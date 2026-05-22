@@ -1,0 +1,16 @@
+{
+  "name": "ggnmem",
+  "dockerComposeFile": "../docker-compose.dev.yml",
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml"
+      ]
+    }
+  },
+  "postCreateCommand": "cargo --version && rustc --version && cargo fmt --version && cargo clippy --version"
+}
