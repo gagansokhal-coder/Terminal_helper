@@ -834,6 +834,39 @@ Claude Opus 4.6 (Thinking)
 
 ---
 
+### Session
+
+Date:
+2026-05-22 (Phase 6B)
+Agent:
+Antigravity
+Model:
+Gemini 3.1 Pro (High)
+
+### Completed
+
+* Executed Phase 6B — Improve search retrieval.
+* Supported short prefixes by introducing `prefix_match_tokens`.
+* Handled 2-char queries with an edit distance of 1 (e.g., `gt` matches `git`).
+* Refactored search engine into a 3-stage cascade: FTS5 trigram (for 3+ chars), prefix scan, and fuzzy scan.
+* Successfully matched expansions and short queries: `gi` -> `git`, `gt` -> `git`, `compose` -> `docker compose`.
+* Adjusted scoring weights: 50% relevance, 20% recency, 20% frequency, 10% cwd.
+* Added corresponding tests for short prefix, 2-char typo, and query expansion.
+
+### Modified Files
+
+* `ggnmem-db/src/domain.rs` (default weights)
+* `ggnmem-db/src/fuzzy.rs` (`max_distance_for_query`, `prefix_match_tokens`)
+* `ggnmem-db/src/storage.rs` (Cascade refactoring in `search_commands_v2`, test additions)
+
+### Current State
+
+* Phase 6B is complete.
+* 23 tests pass including benchmark.
+* Search retrieves expected results for 2-char prefixes and 2-char typos.
+
+---
+
 # Final Directive
 
 Agents must optimize for:

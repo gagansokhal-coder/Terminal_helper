@@ -79,11 +79,28 @@ pub fn fuzzy_match_tokens(query: &str, text: &str, max_distance: usize) -> Optio
 #[must_use]
 pub fn max_distance_for_query(query_len: usize) -> usize {
     match query_len {
-        0..=2 => 0, // no tolerance for very short queries
+        0..=1 => 0, // no tolerance for single-char queries
+        2 => 1,     // 1 typo for 2-char queries (gt → git)
         3..=4 => 1, // 1 typo for 3-4 char queries
         5..=7 => 2, // 2 typos for 5-7 char queries
         _ => 3,     // max 3 typos for 8+ char queries
     }
+}
+
+/// Check whether `query` is a prefix of any whitespace-delimited token in `text`.
+///
+/// Returns `true` if any token starts with the query (case-insensitive).
+/// This catches short queries like "gi" matching "git" that are too short
+/// for FTS5 trigram (which requires 3+ characters).
+#[must_use]
+pub fn prefix_match_tokens(query: &str, text: &str) -> bool {
+    let query_lower = query.to_lowercase();
+    for token in text.split_whitespace() {
+        if token.to_lowercase().starts_with(&query_lower) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Compute a cwd similarity score between 0.0 and 1.0.
@@ -139,11 +156,31 @@ mod tests {
         assert_eq!(fuzzy_match_tokens("dockr", "docker ps", 2), Some(1));
         assert_eq!(fuzzy_match_tokens("dokcer", "docker ps", 2), Some(2));
         assert_eq!(fuzzy_match_tokens("xyz", "docker ps", 2), None);
+        // 2-char query with 1 edit distance
+        assert_eq!(fuzzy_match_tokens("gt", "git status", 1), Some(1));
     }
 
     #[test]
     fn fuzzy_match_tokens_exact_match() {
         assert_eq!(fuzzy_match_tokens("docker", "docker ps", 2), Some(0));
+    }
+
+    #[test]
+    fn prefix_match_basic() {
+        assert!(prefix_match_tokens("gi", "git status"));
+        assert!(prefix_match_tokens("dock", "docker compose up"));
+        assert!(prefix_match_tokens("car", "cargo build"));
+        assert!(!prefix_match_tokens("xyz", "git status"));
+        assert!(!prefix_match_tokens("gi", "docker ps"));
+    }
+
+    #[test]
+    fn max_distance_allows_2char_typos() {
+        assert_eq!(max_distance_for_query(1), 0);
+        assert_eq!(max_distance_for_query(2), 1);
+        assert_eq!(max_distance_for_query(3), 1);
+        assert_eq!(max_distance_for_query(5), 2);
+        assert_eq!(max_distance_for_query(8), 3);
     }
 
     #[test]

@@ -301,12 +301,13 @@ impl Database {
     /// Intelligent search with multi-strategy matching and weighted scoring.
     ///
     /// Strategy cascade:
-    /// 1. FTS5 trigram MATCH for substring/trigram hits
-    /// 2. Edit-distance fuzzy matching fallback for typo tolerance
+    /// 1. FTS5 trigram MATCH (requires 3+ char query)
+    /// 2. Prefix scan (for short queries like "gi" → "git")
+    /// 3. Edit-distance fuzzy matching (typo tolerance)
     ///
     /// Scoring (configurable via `SearchOptions::weights`):
-    /// - 40% match quality (exact > prefix > partial > fuzzy)
-    /// - 30% recency
+    /// - 50% relevance (exact > prefix > partial > fuzzy)
+    /// - 20% recency
     /// - 20% frequency
     /// - 10% cwd similarity
     pub fn search_commands_v2(
@@ -324,15 +325,21 @@ impl Database {
         let query_lower = trimmed.to_lowercase();
         let fetch_limit = opts.limit.saturating_mul(8).max(200);
 
-        // ── Stage 1: FTS5 trigram candidates ─────────────────────────────
-        let mut candidates = self.fts_search(trimmed, fetch_limit)?;
+        // ── Stage 1: FTS5 trigram candidates (only for 3+ char queries) ──
+        let mut candidates = if trimmed.len() >= 3 {
+            self.fts_search(trimmed, fetch_limit)?
+        } else {
+            Vec::new()
+        };
 
-        // ── Stage 2: Fuzzy fallback if FTS5 returned too few results ─────
-        let max_dist = fuzzy::max_distance_for_query(trimmed.len());
-        if candidates.len() < opts.limit as usize && max_dist > 0 {
-            let fuzzy_candidates =
-                self.fuzzy_fallback_search(trimmed, max_dist, fetch_limit, &candidates)?;
-            candidates.extend(fuzzy_candidates);
+        // ── Stage 2: Prefix + fuzzy scan ─────────────────────────────────
+        // Always run if we have fewer results than requested.
+        // This catches short queries ("gi" → "git") and typos ("gt" → "git").
+        if candidates.len() < opts.limit as usize {
+            let max_dist = fuzzy::max_distance_for_query(trimmed.len());
+            let scan_results =
+                self.prefix_and_fuzzy_scan(trimmed, max_dist, fetch_limit, &candidates)?;
+            candidates.extend(scan_results);
         }
 
         if candidates.is_empty() {
@@ -460,9 +467,14 @@ impl Database {
         Ok(results)
     }
 
-    /// Fuzzy fallback: scan recent commands and match via edit distance.
+    /// Prefix + fuzzy scan: scan recent commands and match via prefix or edit distance.
     /// Only adds results not already present in `existing`.
-    fn fuzzy_fallback_search(
+    ///
+    /// This handles:
+    /// - Short prefix queries: "gi" → matches "git status" (prefix match)
+    /// - Typo queries: "gt" → matches "git status" (edit distance = 1)
+    /// - Combined: catches anything FTS5 trigram misses
+    fn prefix_and_fuzzy_scan(
         &self,
         query: &str,
         max_dist: usize,
@@ -472,7 +484,6 @@ impl Database {
         use crate::domain::{MatchKind, SearchResult};
         use crate::fuzzy;
 
-        // Fetch recent commands as fuzzy candidates.
         let mut stmt = self.connection.prepare(
             r#"
             SELECT
@@ -506,7 +517,7 @@ impl Database {
             ))
         })?;
 
-        // Build a set of (command, cwd) pairs from existing results for deduplication.
+        // Dedup against existing results.
         let existing_keys: std::collections::HashSet<(&str, &str)> = existing
             .iter()
             .map(|r| (r.command.as_str(), r.cwd.as_str()))
@@ -516,13 +527,27 @@ impl Database {
         for row in rows {
             let (command, cwd, exit_code, duration_ms, completed_at_ms, run_count) = row?;
 
-            // Skip if already in FTS results.
             if existing_keys.contains(&(command.as_str(), cwd.as_str())) {
                 continue;
             }
 
-            // Check fuzzy match against command tokens.
-            if fuzzy::fuzzy_match_tokens(query, &command, max_dist).is_some() {
+            // Strategy 1: Prefix match ("gi" matches "git" token).
+            if fuzzy::prefix_match_tokens(query, &command) {
+                results.push(SearchResult {
+                    command,
+                    cwd,
+                    exit_code,
+                    duration_ms,
+                    completed_at_ms,
+                    run_count,
+                    match_kind: MatchKind::Prefix,
+                    score: 0.0,
+                });
+                continue;
+            }
+
+            // Strategy 2: Fuzzy edit-distance match ("gt" matches "git").
+            if max_dist > 0 && fuzzy::fuzzy_match_tokens(query, &command, max_dist).is_some() {
                 results.push(SearchResult {
                     command,
                     cwd,
@@ -723,6 +748,90 @@ mod tests {
         assert!(
             results.iter().any(|r| r.command.contains("docker")),
             "should match docker commands"
+        );
+    }
+
+    #[test]
+    fn search_v2_prefix_short_query() {
+        let base_ts = 1_725_000_000_000_i64;
+        let (_temp, database, _) = setup_db_with_commands(&[
+            ("git status", "/home/user/project", base_ts + 100),
+            ("git log --oneline", "/home/user/project", base_ts + 200),
+            ("docker ps", "/home/user", base_ts + 300),
+            ("cargo build", "/home/user/project", base_ts + 400),
+        ]);
+
+        // "gi" should match git commands via prefix scan.
+        let opts = SearchOptions::new("gi").with_limit(20);
+        let results = database
+            .search_commands_v2(&opts)
+            .expect("prefix search works");
+        assert!(
+            !results.is_empty(),
+            "'gi' should find git commands via prefix"
+        );
+        assert!(
+            results.iter().all(|r| r.command.starts_with("git")),
+            "all results should be git commands"
+        );
+
+        // "dock" should match docker commands via prefix.
+        let opts = SearchOptions::new("dock").with_limit(20);
+        let results = database
+            .search_commands_v2(&opts)
+            .expect("prefix search works");
+        assert!(!results.is_empty(), "'dock' should find docker commands");
+
+        // "car" should match cargo commands.
+        let opts = SearchOptions::new("car").with_limit(20);
+        let results = database
+            .search_commands_v2(&opts)
+            .expect("prefix search works");
+        assert!(!results.is_empty(), "'car' should find cargo commands");
+    }
+
+    #[test]
+    fn search_v2_edit_distance_short_query() {
+        let base_ts = 1_725_000_000_000_i64;
+        let (_temp, database, _) = setup_db_with_commands(&[
+            ("git status", "/home/user/project", base_ts + 100),
+            ("git log --oneline", "/home/user/project", base_ts + 200),
+            ("docker ps", "/home/user", base_ts + 300),
+        ]);
+
+        // "gt" should fuzzy-match "git" (edit distance = 1).
+        let opts = SearchOptions::new("gt").with_limit(20);
+        let results = database
+            .search_commands_v2(&opts)
+            .expect("edit distance search works");
+        assert!(
+            !results.is_empty(),
+            "'gt' should find git commands via edit distance"
+        );
+        assert!(
+            results.iter().any(|r| r.command.contains("git")),
+            "should match git commands"
+        );
+    }
+
+    #[test]
+    fn search_v2_compose_expansion() {
+        let base_ts = 1_725_000_000_000_i64;
+        let (_temp, database, _) = setup_db_with_commands(&[
+            ("docker compose up", "/home/user/project", base_ts + 100),
+            ("docker compose down", "/home/user/project", base_ts + 200),
+            ("docker ps", "/home/user", base_ts + 300),
+        ]);
+
+        // "compose" should match docker compose commands.
+        let opts = SearchOptions::new("compose").with_limit(20);
+        let results = database
+            .search_commands_v2(&opts)
+            .expect("compose search works");
+        assert!(
+            results.len() >= 2,
+            "'compose' should find docker compose commands, got {}",
+            results.len()
         );
     }
 

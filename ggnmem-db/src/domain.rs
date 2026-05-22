@@ -194,8 +194,8 @@ pub struct ScoringWeights {
 impl Default for ScoringWeights {
     fn default() -> Self {
         Self {
-            exact_weight: 0.40,
-            recency_weight: 0.30,
+            exact_weight: 0.50,
+            recency_weight: 0.20,
             frequency_weight: 0.20,
             cwd_weight: 0.10,
         }
