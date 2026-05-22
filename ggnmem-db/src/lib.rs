@@ -2,6 +2,7 @@ pub mod config;
 pub mod connection;
 pub mod domain;
 pub mod error;
+pub mod filter;
 pub mod fuzzy;
 pub mod hash;
 pub mod migrations;
@@ -16,4 +17,5 @@ pub use domain::{
     SearchQuery, SearchResult, SessionId, SessionRecord,
 };
 pub use error::{DbError, DbResult};
+pub use filter::should_ingest;
 pub use storage::Database;

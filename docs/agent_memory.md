@@ -867,6 +867,40 @@ Gemini 3.1 Pro (High)
 
 ---
 
+### Session
+
+Date:
+2026-05-22 (Phase 6C)
+Agent:
+Antigravity
+
+### Completed
+
+* Executed Phase 6C — Command filtering layer before ingestion.
+* Created `ggnmem-db/src/filter.rs` with `should_ingest()` pure function.
+* Filters reject: ggnmem internal commands, shell control (exit/logout/clear/history/reset/true/false/:/source/.), navigation-only (cd/pushd/popd), env noise (export/unset/set/alias/unalias/eval), single-char noise, empty input, credential patterns (password=/secret=/token=/api_key=).
+* Wired filter into daemon `IngestCommand` handler — rejected commands get `Accepted` response (no error) but are never enqueued.
+* 9 filter unit tests covering all categories plus edge cases (case insensitivity, similar command names like `echo clear`).
+* All 32 tests pass. Clippy and fmt clean.
+
+### New Files
+
+* `ggnmem-db/src/filter.rs`
+
+### Modified Files
+
+* `ggnmem-db/src/lib.rs` (registered filter module, re-exported `should_ingest`)
+* `ggnmem-daemon/src/daemon.rs` (pre-ingestion filter gate)
+* `docs/agent_memory.md`
+
+### Design Decisions
+
+* Filter returns `Accepted` (not `Error`) for rejected commands so shell hooks don't retry or log errors.
+* Filter lives in `ggnmem-db` (not daemon) so it can be unit-tested without async/IPC and reused by future ingestion paths.
+* Credential filtering is intentionally conservative (substring match on known patterns) — not a security guarantee, just noise reduction.
+
+---
+
 # Final Directive
 
 Agents must optimize for:

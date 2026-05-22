@@ -167,14 +167,21 @@ async fn handle_connection(
         }
         DaemonRequest::IngestCommand {
             session, command, ..
-        } => match state.queue.try_enqueue(QueueItem::Command(QueueCommand {
-            session: *session,
-            command: *command,
-            attempts: 0,
-        })) {
-            Ok(receipt) => DaemonResponse::accepted(receipt.queue_depth),
-            Err(error) => DaemonResponse::error("queue_unavailable", error.to_string()),
-        },
+        } => {
+            // Pre-ingestion filter: silently drop noise commands.
+            if !ggnmem_db::should_ingest(&command.command) {
+                DaemonResponse::accepted(state.queue.depth())
+            } else {
+                match state.queue.try_enqueue(QueueItem::Command(QueueCommand {
+                    session: *session,
+                    command: *command,
+                    attempts: 0,
+                })) {
+                    Ok(receipt) => DaemonResponse::accepted(receipt.queue_depth),
+                    Err(error) => DaemonResponse::error("queue_unavailable", error.to_string()),
+                }
+            }
+        }
         DaemonRequest::QueryRecent { limit, .. } => {
             match storage::query_recent_commands(state.database_path.clone(), limit).await {
                 Ok(commands) => DaemonResponse::recent_commands(commands),
