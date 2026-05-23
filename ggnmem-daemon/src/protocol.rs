@@ -85,6 +85,9 @@ pub enum DaemonRequest {
         /// Sort by recency only, ignoring scoring weights.
         recent_only: bool,
     },
+    CleanupCommands {
+        version: ProtocolVersion,
+    },
 }
 
 impl DaemonRequest {
@@ -148,6 +151,13 @@ impl DaemonRequest {
             limit,
             cwd,
             recent_only,
+        }
+    }
+
+    #[must_use]
+    pub fn cleanup_commands() -> Self {
+        Self::CleanupCommands {
+            version: PROTOCOL_VERSION,
         }
     }
 }
@@ -225,6 +235,14 @@ impl DaemonResponse {
             kind: DaemonResponseKind::SearchResults { results },
         }
     }
+
+    #[must_use]
+    pub fn cleanup_result(removed: u64, remaining: u64) -> Self {
+        Self {
+            version: PROTOCOL_VERSION,
+            kind: DaemonResponseKind::CleanupResult { removed, remaining },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -237,4 +255,5 @@ pub enum DaemonResponseKind {
     RecentCommands { commands: Vec<CommandSummary> },
     CommandCount { count: u64 },
     SearchResults { results: Vec<SearchResultSummary> },
+    CleanupResult { removed: u64, remaining: u64 },
 }

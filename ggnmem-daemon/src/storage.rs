@@ -125,3 +125,12 @@ pub async fn search_commands(
     .await??;
     Ok(results)
 }
+
+pub async fn cleanup_commands(database_path: PathBuf) -> DaemonResult<ggnmem_db::CleanupStats> {
+    let stats = tokio::task::spawn_blocking(move || {
+        let database = Database::open(&DatabaseConfig::new(database_path))?;
+        database.cleanup_internal_commands()
+    })
+    .await??;
+    Ok(stats)
+}

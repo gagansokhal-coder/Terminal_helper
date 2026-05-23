@@ -214,6 +214,12 @@ async fn handle_connection(
                 Err(error) => DaemonResponse::error("search_failed", error.to_string()),
             }
         }
+        DaemonRequest::CleanupCommands { .. } => {
+            match storage::cleanup_commands(state.database_path.clone()).await {
+                Ok(stats) => DaemonResponse::cleanup_result(stats.removed, stats.remaining),
+                Err(error) => DaemonResponse::error("cleanup_failed", error.to_string()),
+            }
+        }
     };
 
     connection.send(&response).await?;
