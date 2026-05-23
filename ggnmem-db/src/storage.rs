@@ -5,8 +5,18 @@ use crate::{
     connection,
     domain::{CommandId, CommandRecord, NewCommand, NewSession, SessionId, SessionRecord},
     error::DbResult,
+    filter,
     hash::{content_hash, normalize_command},
 };
+
+/// Statistics returned after a cleanup operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CleanupStats {
+    /// Number of internal command rows deleted.
+    pub removed: u64,
+    /// Number of commands remaining after cleanup.
+    pub remaining: u64,
+}
 
 pub struct Database {
     connection: Connection,
@@ -372,6 +382,12 @@ impl Database {
         let w = &opts.weights;
 
         for c in &mut candidates {
+            // ── Ranking protection: internal commands → score = 0 ─────
+            if filter::is_internal_command(&c.command) {
+                c.score = 0.0;
+                continue;
+            }
+
             // Match quality score [0.0, 1.0].
             let match_score = match c.match_kind {
                 MatchKind::Exact => 1.0,
@@ -562,6 +578,53 @@ impl Database {
         }
 
         Ok(results)
+    }
+
+    // ─── Phase 6C: Database Cleanup ──────────────────────────────────────────
+
+    /// Remove previously indexed internal commands from the database.
+    ///
+    /// Deletes rows from `commands`, `command_metadata`, `command_queue`, and
+    /// the FTS index where the command text matches known internal patterns
+    /// (e.g. `ggnmem %`, `history`, `clear`, `exit`).
+    ///
+    /// Runs `VACUUM` afterwards to reclaim disk space.
+    pub fn cleanup_internal_commands(&self) -> DbResult<CleanupStats> {
+        let before = self.count_commands()?;
+
+        // SQL WHERE clause shared across all related tables.
+        // Matches: ggnmem *, ggnmem-*, bare ggnmem, and shell noise.
+        const INTERNAL_WHERE: &str = r#"
+            command LIKE 'ggnmem %'
+            OR command LIKE 'ggnmem-%'
+            OR command = 'ggnmem'
+            OR LOWER(TRIM(command)) IN ('history', 'clear', 'exit', 'logout', 'reset')
+        "#;
+
+        // Delete from command_queue (references command_id).
+        // Best-effort: table may not have matching rows.
+        let _ = self.connection.execute_batch(&format!(
+            "DELETE FROM command_queue WHERE command_id IN (SELECT id FROM commands WHERE {INTERNAL_WHERE});"
+        ));
+
+        // Delete from command_metadata (references command_id).
+        // Best-effort: table may not have matching rows.
+        let _ = self.connection.execute_batch(&format!(
+            "DELETE FROM command_metadata WHERE command_id IN (SELECT id FROM commands WHERE {INTERNAL_WHERE});"
+        ));
+
+        // Delete from commands (main table).
+        // The commands_fts_delete trigger automatically removes matching FTS entries.
+        self.connection
+            .execute_batch(&format!("DELETE FROM commands WHERE {INTERNAL_WHERE};"))?;
+
+        let remaining = self.count_commands()?;
+        let removed = before.saturating_sub(remaining);
+
+        // Reclaim disk space. Safe to ignore errors here.
+        let _ = self.connection.execute_batch("VACUUM;");
+
+        Ok(CleanupStats { removed, remaining })
     }
 }
 
@@ -1035,5 +1098,90 @@ mod tests {
             "cwd-boosted search took {}ms (target <100ms)",
             elapsed.as_millis()
         );
+    }
+
+    // ─── Phase 6C: Cleanup & ranking protection ─────────────────────────────
+
+    #[test]
+    fn cleanup_removes_internal_commands() {
+        let base_ts = 1_725_000_000_000_i64;
+        let (_temp, database, _) = setup_db_with_commands(&[
+            ("git status", "/home/user", base_ts + 100),
+            ("ggnmem search docker", "/home/user", base_ts + 200),
+            ("ggnmem recent", "/home/user", base_ts + 300),
+            ("ggnmem doctor", "/home/user", base_ts + 400),
+            ("docker ps", "/home/user", base_ts + 500),
+            ("cargo build", "/home/user/project", base_ts + 600),
+        ]);
+
+        let before = database.count_commands().expect("count before");
+        assert_eq!(before, 6, "should have 6 commands before cleanup");
+
+        let stats = database
+            .cleanup_internal_commands()
+            .expect("cleanup succeeds");
+
+        assert_eq!(stats.removed, 3, "should remove 3 ggnmem commands");
+        assert_eq!(stats.remaining, 3, "should have 3 commands remaining");
+
+        // Verify the right commands survived.
+        let remaining = database.list_recent_commands(10).expect("list");
+        let cmds: Vec<&str> = remaining.iter().map(|r| r.command.as_str()).collect();
+        assert!(cmds.contains(&"git status"), "git status should survive");
+        assert!(cmds.contains(&"docker ps"), "docker ps should survive");
+        assert!(cmds.contains(&"cargo build"), "cargo build should survive");
+        assert!(
+            !cmds.iter().any(|c| c.starts_with("ggnmem")),
+            "no ggnmem commands should survive"
+        );
+    }
+
+    #[test]
+    fn cleanup_is_idempotent() {
+        let base_ts = 1_725_000_000_000_i64;
+        let (_temp, database, _) = setup_db_with_commands(&[
+            ("ggnmem search docker", "/home/user", base_ts + 100),
+            ("git status", "/home/user", base_ts + 200),
+        ]);
+
+        let stats1 = database.cleanup_internal_commands().expect("first cleanup");
+        assert_eq!(stats1.removed, 1);
+
+        let stats2 = database
+            .cleanup_internal_commands()
+            .expect("second cleanup");
+        assert_eq!(stats2.removed, 0, "second cleanup should find nothing");
+        assert_eq!(stats2.remaining, 1);
+    }
+
+    #[test]
+    fn ranking_protection_scores_internal_commands_zero() {
+        let base_ts = 1_725_000_000_000_i64;
+        // Bypass the ingestion filter by inserting directly.
+        let (_temp, database, _) = setup_db_with_commands(&[
+            ("git status", "/home/user/project", base_ts + 100),
+            ("git log --oneline", "/home/user/project", base_ts + 200),
+            ("ggnmem search git", "/home/user", base_ts + 300),
+        ]);
+
+        let opts = SearchOptions::new("git").with_limit(20);
+        let results = database.search_commands_v2(&opts).expect("search works");
+
+        // The ggnmem command should have score = 0 and appear last.
+        for r in &results {
+            if r.command.starts_with("ggnmem") {
+                assert_eq!(
+                    r.score, 0.0,
+                    "internal command should have score 0, got {}",
+                    r.score
+                );
+            } else {
+                assert!(
+                    r.score > 0.0,
+                    "normal command should have positive score, got {}",
+                    r.score
+                );
+            }
+        }
     }
 }

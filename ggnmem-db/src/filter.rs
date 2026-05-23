@@ -4,6 +4,31 @@
 //! database. Rejects noise like internal ggnmem commands, shell control
 //! sequences, bare builtins, and credential-bearing commands.
 
+/// Returns `true` if the command is an internal ggnmem command or a shell
+/// noise command that should never appear in search results.
+///
+/// Used by:
+/// - **Ranking**: penalise any surviving internal commands to `score = 0`.
+/// - **Cleanup**: identify rows to purge from the database.
+#[must_use]
+pub fn is_internal_command(command: &str) -> bool {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let first_token = trimmed.split_whitespace().next().unwrap_or("");
+    let first_lower = first_token.to_lowercase();
+
+    // ggnmem and ggnmem-daemon / ggnmem-cli / etc.
+    if first_lower == "ggnmem" || first_lower.starts_with("ggnmem-") {
+        return true;
+    }
+
+    // Shell control commands that pollute search results.
+    const SHELL_NOISE: &[&str] = &["history", "clear", "exit", "logout", "reset"];
+    SHELL_NOISE.contains(&first_lower.as_str())
+}
+
 /// Returns `true` if the command should be ingested, `false` if it should
 /// be silently dropped.
 #[must_use]
@@ -166,5 +191,47 @@ mod tests {
         assert!(should_ingest("git commit -m 'exit fix'"));
         assert!(should_ingest("echo clear"));
         assert!(should_ingest("rm -rf /tmp/history"));
+    }
+
+    // ── is_internal_command ─────────────────────────────────────────
+
+    #[test]
+    fn detects_internal_ggnmem_commands() {
+        assert!(is_internal_command("ggnmem search docker"));
+        assert!(is_internal_command("ggnmem recent"));
+        assert!(is_internal_command("ggnmem doctor"));
+        assert!(is_internal_command("ggnmem ping"));
+        assert!(is_internal_command("ggnmem status"));
+        assert!(is_internal_command("ggnmem count"));
+        assert!(is_internal_command("ggnmem ingest"));
+        assert!(is_internal_command("ggnmem cleanup"));
+        assert!(is_internal_command("ggnmem-daemon"));
+        assert!(is_internal_command("ggnmem-cli"));
+        assert!(is_internal_command("GGNMEM search docker"));
+    }
+
+    #[test]
+    fn detects_shell_noise_commands() {
+        assert!(is_internal_command("history"));
+        assert!(is_internal_command("clear"));
+        assert!(is_internal_command("exit"));
+        assert!(is_internal_command("logout"));
+        assert!(is_internal_command("reset"));
+    }
+
+    #[test]
+    fn is_internal_allows_normal_commands() {
+        assert!(!is_internal_command("git status"));
+        assert!(!is_internal_command("docker ps"));
+        assert!(!is_internal_command("cargo build"));
+        assert!(!is_internal_command("npm install"));
+        assert!(!is_internal_command("ls -la"));
+    }
+
+    #[test]
+    fn is_internal_handles_edge_cases() {
+        assert!(!is_internal_command(""));
+        assert!(!is_internal_command("   "));
+        assert!(!is_internal_command("echo ggnmem"));
     }
 }

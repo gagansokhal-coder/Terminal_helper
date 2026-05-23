@@ -17,5 +17,5 @@ pub use domain::{
     SearchQuery, SearchResult, SessionId, SessionRecord,
 };
 pub use error::{DbError, DbResult};
-pub use filter::should_ingest;
-pub use storage::Database;
+pub use filter::{is_internal_command, should_ingest};
+pub use storage::{CleanupStats, Database};
