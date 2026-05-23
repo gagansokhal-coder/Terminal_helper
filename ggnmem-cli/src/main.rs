@@ -1,4 +1,5 @@
 mod hooks;
+mod tui;
 
 use anyhow::{bail, Context, Result};
 use ggnmem_daemon::{
@@ -21,6 +22,8 @@ async fn main() -> Result<()> {
         Some("count") => count().await,
         Some("doctor") => doctor().await,
         Some("search") => search(&args).await,
+        Some("cleanup") => cleanup().await,
+        Some("ui") => tui::run_tui().await,
         Some(command) => bail!("unknown command: {command}"),
         None => {
             print_usage();
@@ -36,9 +39,11 @@ fn print_usage() {
     println!();
     println!("commands:");
     println!("  init <bash|zsh>  Generate shell integration script");
+    println!("  ui               Interactive search interface (TUI)");
     println!("  recent           Show recent captured commands");
     println!("  search <query>   Search captured commands");
     println!("  count            Show total number of indexed commands");
+    println!("  cleanup          Remove internal ggnmem commands from database");
     println!("  doctor           Check daemon, IPC, and database health");
     println!("  ping             Ping the daemon");
     println!("  status           Show daemon status");
@@ -265,6 +270,25 @@ async fn count() -> Result<()> {
     match response.kind {
         DaemonResponseKind::CommandCount { count } => {
             println!("{count}");
+            Ok(())
+        }
+        DaemonResponseKind::Error { code, message } => bail!("{code}: {message}"),
+        other => bail!("unexpected daemon response: {other:?}"),
+    }
+}
+
+// ─── Cleanup ─────────────────────────────────────────────────────────────────
+
+async fn cleanup() -> Result<()> {
+    let response = request(DaemonRequest::cleanup_commands()).await?;
+    match response.kind {
+        DaemonResponseKind::CleanupResult { removed, remaining } => {
+            if removed == 0 {
+                println!("No internal commands found. Database is clean.");
+            } else {
+                println!("Removed {removed} internal commands.");
+            }
+            println!("Database optimized. {remaining} commands remaining.");
             Ok(())
         }
         DaemonResponseKind::Error { code, message } => bail!("{code}: {message}"),

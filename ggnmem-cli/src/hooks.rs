@@ -56,6 +56,30 @@ __ggnmem_precmd() {
 autoload -Uz add-zsh-hook
 add-zsh-hook preexec __ggnmem_preexec
 add-zsh-hook precmd __ggnmem_precmd
+
+# ── Interactive TUI widget (Ctrl+R) ──
+__ggnmem_widget() {
+    local state_dir="$HOME/.local/state/ggnmem"
+    local insert_file="$state_dir/insert"
+    local execute_file="$state_dir/execute"
+
+    rm -f "$insert_file" "$execute_file"
+    ggnmem ui
+
+    if [ -f "$insert_file" ]; then
+        BUFFER="$(cat "$insert_file")"
+        CURSOR=${#BUFFER}
+    fi
+    if [ -f "$execute_file" ]; then
+        BUFFER="$(cat "$execute_file")"
+        CURSOR=${#BUFFER}
+        zle accept-line
+    fi
+    rm -f "$insert_file" "$execute_file"
+    zle redisplay
+}
+zle -N __ggnmem_widget
+bindkey '^R' __ggnmem_widget
 "#
 }
 
@@ -109,5 +133,28 @@ __ggnmem_precmd() {
 
 trap '__ggnmem_preexec' DEBUG
 PROMPT_COMMAND="__ggnmem_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+
+# ── Interactive TUI widget (Ctrl+R) ──
+__ggnmem_widget() {
+    local state_dir="$HOME/.local/state/ggnmem"
+    local insert_file="$state_dir/insert"
+    local execute_file="$state_dir/execute"
+
+    rm -f "$insert_file" "$execute_file"
+    ggnmem ui
+
+    if [ -f "$insert_file" ]; then
+        READLINE_LINE="$(cat "$insert_file")"
+        READLINE_POINT=${#READLINE_LINE}
+    fi
+    if [ -f "$execute_file" ]; then
+        READLINE_LINE="$(cat "$execute_file")"
+        READLINE_POINT=${#READLINE_LINE}
+        printf '\n'
+        bind '"\r":accept-line'
+    fi
+    rm -f "$insert_file" "$execute_file"
+}
+bind -x '"\C-r": __ggnmem_widget'
 "#
 }
