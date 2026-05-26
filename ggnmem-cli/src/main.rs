@@ -1,7 +1,13 @@
+mod config;
+mod export;
 mod hooks;
+mod profile;
+mod service;
+mod setup;
 mod tui;
 
 use anyhow::{bail, Context, Result};
+use std::path::PathBuf;
 use ggnmem_daemon::{
     protocol::{
         CommandPayload, DaemonRequest, DaemonResponse, DaemonResponseKind, SessionPayload,
@@ -24,6 +30,19 @@ async fn main() -> Result<()> {
         Some("search") => search(&args).await,
         Some("cleanup") => cleanup().await,
         Some("ui") => tui::run_tui().await,
+        Some("version" | "--version" | "-V") => {
+            version();
+            Ok(())
+        }
+        Some("install") => setup::install(),
+        Some("uninstall") => setup::uninstall(&args),
+        Some("config") => cmd_config(&args),
+        Some("profile") => cmd_profile(&args),
+        Some("start") => service::cmd_start(),
+        Some("stop") => service::cmd_stop(),
+        Some("restart") => service::cmd_restart(),
+        Some("autostart") => cmd_autostart(&args),
+        Some("export") => export::cmd_export(&args).await,
         Some(command) => bail!("unknown command: {command}"),
         None => {
             print_usage();
@@ -33,7 +52,7 @@ async fn main() -> Result<()> {
 }
 
 fn print_usage() {
-    println!("ggnmem — semantic terminal memory engine");
+    println!("ggnmem {} — semantic terminal memory engine", env!("CARGO_PKG_VERSION"));
     println!();
     println!("usage: ggnmem <command>");
     println!();
@@ -44,16 +63,65 @@ fn print_usage() {
     println!("  search <query>   Search captured commands");
     println!("  count            Show total number of indexed commands");
     println!("  cleanup          Remove internal ggnmem commands from database");
-    println!("  doctor           Check daemon, IPC, and database health");
-    println!("  ping             Ping the daemon");
+    println!("  export           Export command history (--format json|csv)");
+    println!();
+    println!("daemon:");
+    println!("  start            Start the daemon in background");
+    println!("  stop             Stop the running daemon");
+    println!("  restart          Restart the daemon");
     println!("  status           Show daemon status");
-    println!("  ingest           (internal) Ingest a command from shell hook");
+    println!("  autostart        Enable/disable daemon autostart");
+    println!();
+    println!("config:");
+    println!("  config show      Show current configuration");
+    println!("  config set K V   Set a config value");
+    println!("  profile list     Show available profiles");
+    println!("  profile apply N  Apply a named profile");
+    println!();
+    println!("setup:");
+    println!("  install          Set up shell integration and config");
+    println!("  uninstall        Remove ggnmem (--full to include database)");
+    println!("  doctor           Check installation and daemon health");
+    println!("  version          Show version");
     println!();
     println!("search options:");
     println!("  --limit N        Maximum results (default: 20)");
     println!("  --cwd            Boost results from current directory");
     println!("  --recent         Sort by recency only");
     println!("  --json           Output as JSON");
+}
+
+// ─── Subcommand routers ──────────────────────────────────────────────────────
+
+fn cmd_config(args: &[String]) -> Result<()> {
+    match args.get(2).map(String::as_str) {
+        Some("show") | None => config::cmd_show(),
+        Some("set") => config::cmd_set(args),
+        Some(sub) => bail!("unknown config subcommand: {sub}\n\nusage:\n  ggnmem config show\n  ggnmem config set <key> <value>"),
+    }
+}
+
+fn cmd_profile(args: &[String]) -> Result<()> {
+    match args.get(2).map(String::as_str) {
+        Some("list") | None => profile::cmd_list(),
+        Some("apply") => profile::cmd_apply(args),
+        Some(sub) => bail!("unknown profile subcommand: {sub}\n\nusage:\n  ggnmem profile list\n  ggnmem profile apply <name>"),
+    }
+}
+
+fn cmd_autostart(args: &[String]) -> Result<()> {
+    match args.get(2).map(String::as_str) {
+        Some("enable") => service::cmd_autostart_enable(),
+        Some("disable") => service::cmd_autostart_disable(),
+        Some(sub) => bail!("unknown autostart subcommand: {sub}\n\nusage:\n  ggnmem autostart enable\n  ggnmem autostart disable"),
+        None => bail!("usage:\n  ggnmem autostart enable\n  ggnmem autostart disable"),
+    }
+}
+
+// ─── Version ─────────────────────────────────────────────────────────────────
+
+fn version() {
+    println!("ggnmem {}", env!("CARGO_PKG_VERSION"));
 }
 
 // ─── Existing commands ───────────────────────────────────────────────────────
@@ -301,62 +369,182 @@ async fn cleanup() -> Result<()> {
 async fn doctor() -> Result<()> {
     println!("ggnmem doctor");
     println!("─────────────────────────────────");
+    println!();
 
-    // Check IPC connectivity.
-    print!("ipc connection  ... ");
+    // ── Offline checks (no daemon required) ──
+
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("~"));
+
+    // Version.
+    println!("version         ... {}", env!("CARGO_PKG_VERSION"));
+
+    // Binary install.
+    let bin_dir = home.join(".local").join("bin");
+    let cli_bin = bin_dir.join("ggnmem");
+    let daemon_bin = bin_dir.join("ggnmem-daemon");
+    print!("ggnmem binary   ... ");
+    if cli_bin.exists() {
+        println!("✓ {}", cli_bin.display());
+    } else {
+        println!("✗ not found at {}", cli_bin.display());
+    }
+    print!("daemon binary   ... ");
+    if daemon_bin.exists() {
+        println!("✓ {}", daemon_bin.display());
+    } else {
+        println!("✗ not found at {}", daemon_bin.display());
+    }
+
+    // Config.
+    let config_file = home.join(".config").join("ggnmem").join("config.toml");
+    print!("config          ... ");
+    if config_file.exists() {
+        println!("✓ {}", config_file.display());
+    } else {
+        println!("✗ not found (run: ggnmem install)");
+    }
+
+    // Config details (features + profile).
+    match config::load() {
+        Ok(cfg) => {
+            let profile_name = profile::detect_profile(&cfg)
+                .unwrap_or("custom");
+            println!("  profile       ... {profile_name}");
+            println!(
+                "  features      ... capture={} search={} tui={} ai={}",
+                cfg.features.capture,
+                cfg.features.search,
+                cfg.features.tui,
+                cfg.features.ai
+            );
+            println!("  max_history   ... {}", cfg.limits.max_history);
+            println!("  index_mode    ... {}", cfg.search.index_mode);
+        }
+        Err(_) => {
+            println!("  config        ... (could not load)");
+        }
+    }
+
+    // Database.
+    let db_path = home.join(".local").join("share").join("ggnmem").join("ggnmem.db");
+    print!("database        ... ");
+    if db_path.exists() {
+        let size = std::fs::metadata(&db_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        let size_str = if size < 1024 {
+            format!("{size} B")
+        } else if size < 1024 * 1024 {
+            format!("{:.1} KB", size as f64 / 1024.0)
+        } else {
+            format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+        };
+        println!("✓ {} ({})", db_path.display(), size_str);
+    } else {
+        println!("✗ not found (start daemon to create)");
+    }
+
+    // Shell integration.
+    print!("shell hooks     ... ");
+    let bashrc = home.join(".bashrc");
+    let zshrc = home.join(".zshrc");
+    let mut shell_found = false;
+    if zshrc.exists() {
+        if let Ok(contents) = std::fs::read_to_string(&zshrc) {
+            if contents.contains("ggnmem init") {
+                print!("✓ zsh ");
+                shell_found = true;
+            }
+        }
+    }
+    if bashrc.exists() {
+        if let Ok(contents) = std::fs::read_to_string(&bashrc) {
+            if contents.contains("ggnmem init") {
+                print!("✓ bash ");
+                shell_found = true;
+            }
+        }
+    }
+    if shell_found {
+        println!();
+    } else {
+        println!("✗ not configured (run: ggnmem install)");
+    }
+
+    // ── Online checks (daemon required) ──
+
+    println!();
+    print!("daemon          ... ");
+
+    // First check PID file.
+    let (pid_running, pid_val) = service::daemon_status()?;
     let health_result = request(DaemonRequest::health()).await;
     match &health_result {
         Ok(response) => match &response.kind {
             DaemonResponseKind::Health(status) => {
-                println!("ok");
-                println!();
-                println!("daemon state    ... {:?}", status.state);
-                println!("uptime          ... {}ms", status.uptime_ms);
+                if let Some(pid) = pid_val {
+                    println!("✓ running (PID {pid})");
+                } else {
+                    println!("✓ running");
+                }
+                println!("  state         ... {:?}", status.state);
+                println!("  uptime        ... {}ms", status.uptime_ms);
                 println!(
-                    "queue           ... {}/{}",
+                    "  queue         ... {}/{}",
                     status.queue_depth, status.queue_capacity
                 );
                 println!(
-                    "database        ... {}",
+                    "  db connected  ... {}",
                     if status.db_connected {
-                        "connected"
+                        "✓"
                     } else {
-                        "disconnected"
+                        "✗"
                     }
                 );
-                println!("platform        ... {}", status.platform);
+                println!("  platform      ... {}", status.platform);
             }
             DaemonResponseKind::Error { code, message } => {
-                println!("error: {code}: {message}");
+                println!("✗ error: {code}: {message}");
             }
             other => {
-                println!("unexpected: {other:?}");
+                println!("✗ unexpected: {other:?}");
             }
         },
-        Err(error) => {
-            println!("FAILED");
-            println!("  daemon is not reachable: {error}");
-            println!();
-            println!("  make sure the daemon is running:");
-            println!("    ggnmem-daemon");
-            return Ok(());
+        Err(_error) => {
+            if pid_running {
+                println!("✗ PID file exists but IPC failed");
+            } else {
+                println!("✗ not running");
+            }
+            println!("  start with: ggnmem start");
         }
     }
 
-    // Check command count.
-    println!();
-    print!("command count   ... ");
-    match request(DaemonRequest::count_commands()).await {
-        Ok(response) => match response.kind {
-            DaemonResponseKind::CommandCount { count } => {
-                println!("{count} commands indexed");
-            }
-            DaemonResponseKind::Error { code, message } => {
-                println!("error: {code}: {message}");
-            }
-            _ => println!("unexpected response"),
-        },
-        Err(error) => println!("FAILED: {error}"),
+    // Capture check.
+    print!("capture         ... ");
+    match config::load() {
+        Ok(cfg) if cfg.features.capture => println!("✓ enabled"),
+        Ok(_) => println!("✗ disabled (ggnmem config set capture true)"),
+        Err(_) => println!("? (config not loaded)"),
+    }
+
+    // Command count (only if daemon is reachable).
+    if health_result.is_ok() {
+        print!("commands        ... ");
+        match request(DaemonRequest::count_commands()).await {
+            Ok(response) => match response.kind {
+                DaemonResponseKind::CommandCount { count } => {
+                    println!("{count} indexed");
+                }
+                DaemonResponseKind::Error { code, message } => {
+                    println!("error: {code}: {message}");
+                }
+                _ => println!("unexpected response"),
+            },
+            Err(error) => println!("error: {error}"),
+        }
     }
 
     println!();
