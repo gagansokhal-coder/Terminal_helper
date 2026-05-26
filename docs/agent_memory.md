@@ -1228,6 +1228,244 @@ or extra if neede
 
 ---
 
+### Session
+
+Date:
+2026-05-26 (Phase 8 — Packaging + Installer)
+Agent:
+Antigravity
+Model:
+Claude Opus 4.6 (Thinking)
+
+### Completed
+
+* Executed Phase 8 — Packaging + Installer.
+* **Part A — install.sh**: Created standalone installer script supporting `curl | bash` and `./install.sh`. Detects architecture (x86_64/aarch64), OS (Linux only), WSL. Creates `~/.local/bin`, `~/.config/ggnmem`, `~/.local/share/ggnmem`, `~/.local/state/ggnmem`. Finds binaries from `release/` or `target/release/`. Installs binaries, writes default config.toml, adds shell integration to bashrc/zshrc, updates PATH, verifies install.
+* **Part B — CLI install/uninstall**: Created `ggnmem-cli/src/setup.rs` module. `ggnmem install` creates directories, writes config.toml, detects shell, adds integration to rc files, checks PATH. `ggnmem uninstall` removes shell integration from both bashrc and zshrc, removes binaries from `~/.local/bin/`, removes config and state dirs. `ggnmem uninstall --full` also removes database.
+* **Part C — Config**: Default config at `~/.config/ggnmem/config.toml` with `[features]` (capture, search, tui, ai) and `[appearance]` (theme) sections. Written only if not already present (never overwrites user config).
+* **Part D — Version**: Added `ggnmem version`, `ggnmem --version`, `ggnmem -V` commands. Uses `env!("CARGO_PKG_VERSION")` for compile-time sync. Bumped workspace version from `0.1.0` to `0.3.0-alpha`.
+* **Part E — Doctor Enhancement**: Rewrote `ggnmem doctor` with offline checks (no daemon required): version, binary install paths, config file, database file with size, shell hook status in both bashrc/zshrc. Online checks: daemon connectivity with state/uptime/queue/platform details, command count. Doctor is now useful even without a running daemon.
+* **Part F — Release Build Script**: Created `scripts/build_release.sh`. Runs `cargo build --release`, creates `release/` directory, copies and renames `ggnmem-cli` → `ggnmem`, copies `ggnmem-daemon`, copies `install.sh`, strips debug symbols, generates `release/README.md` with quick-start docs, prints binary sizes.
+* **Part G — Documentation**: Updated `agent_memory.md` with installation flow, paths, and known limitations.
+* Added `/release/` to `.gitignore`.
+* Updated help text to include install, uninstall, version commands.
+
+### New Files
+
+* `ggnmem-cli/src/setup.rs` — Install/uninstall module (~320 lines)
+* `install.sh` — Standalone installer script (~240 lines)
+* `scripts/build_release.sh` — Release build script (~120 lines)
+
+### Modified Files
+
+* `Cargo.toml` (version bump to 0.3.0-alpha)
+* `ggnmem-cli/src/main.rs` (added setup module, version/install/uninstall commands, enhanced doctor)
+* `.gitignore` (added /release/)
+* `docs/agent_memory.md` (Phase 8 session log)
+
+### Architectural Decisions
+
+* Preserved the existing five-crate workspace without introducing new crates.
+* `setup.rs` lives in `ggnmem-cli` as a module — no new crate needed.
+* Version string uses `env!("CARGO_PKG_VERSION")` so it auto-syncs with Cargo.toml.
+* install.sh does NOT download binaries from the internet — it requires pre-built binaries in `release/` or `target/release/`.
+* CLI binary is renamed from `ggnmem-cli` to `ggnmem` during install/release build.
+* Shell integration is wrapped in marker comments (`# ggnmem shell integration` / `# end ggnmem`) for clean uninstall.
+* Config file is never overwritten if it already exists.
+* Database is preserved by default during uninstall (requires `--full` to remove).
+* Doctor checks are ordered: offline first (version, binaries, config, db, shell hooks), then online (daemon, command count).
+* No changes to search, daemon, TUI, or database code.
+
+## Phase 8 — Installation Flow Documentation
+
+### Directory Layout
+
+| Path | Purpose | Created By |
+|------|---------|------------|
+| `~/.local/bin/ggnmem` | CLI binary | install.sh / ggnmem install |
+| `~/.local/bin/ggnmem-daemon` | Background daemon binary | install.sh |
+| `~/.config/ggnmem/config.toml` | User configuration | install.sh / ggnmem install |
+| `~/.local/share/ggnmem/ggnmem.db` | SQLite database | ggnmem-daemon (on first run) |
+| `~/.local/state/ggnmem/` | Runtime state (TUI insert/execute files) | ggnmem install |
+
+### Install Methods
+
+**Method 1 — From source (recommended for development):**
+```bash
+git clone https://github.com/ggnmem/ggnmem
+cd ggnmem
+bash scripts/build_release.sh
+bash install.sh
+```
+
+**Method 2 — CLI setup (after binaries are in PATH):**
+```bash
+ggnmem install
+```
+
+**Method 3 — Release package:**
+```bash
+# Extract release tarball
+cd release/
+bash install.sh
+```
+
+### Uninstall
+
+```bash
+ggnmem uninstall          # removes binaries, config, hooks; preserves database
+ggnmem uninstall --full   # removes everything including database
+```
+
+### Known Limitations
+
+* install.sh requires pre-built binaries (no remote download yet — no GitHub releases infrastructure).
+* Systemd user service for auto-starting daemon is not included (daemon must be started manually with `ggnmem-daemon &`).
+* Config file (`config.toml`) is written but not yet read by the daemon or CLI — it's a placeholder for future configuration parsing.
+* The `ai = false` config option has no effect — AI/semantic search is not implemented.
+* install.sh only supports Linux and WSL; macOS and native Windows are excluded.
+* PATH update requires a new shell session or manual `source ~/.bashrc` / `source ~/.zshrc`.
+* Native Windows build/install remains toolchain-blocked (missing MSVC linker).
+
+### Next Recommended Steps
+
+* Validate with `cargo check`, `cargo test`, `cargo clippy`, `cargo build --release` in WSL.
+* Test full install/uninstall cycle on clean WSL.
+* Add config file parsing to daemon and CLI in a future phase.
+* Add systemd user service file when daemon lifecycle management is needed.
+
+### Warnings
+
+* Do not implement semantic search, embeddings, AI features, or PTY overlay.
+* Do not modify existing search, daemon, TUI, or database code.
+* Config file is currently write-only (not read by any component).
+
+---
+
+### Session
+
+Date:
+2026-05-26 (Phase 9 — Config + Profiles + Service Management)
+Agent:
+Antigravity
+Model:
+Claude Opus 4.6 (Thinking)
+
+### Completed
+
+* Executed Phase 9 — Config + Profiles + Service Management.
+* **Part A — Config System**: Created `ggnmem-cli/src/config.rs`. Reads/writes `~/.config/ggnmem/config.toml` using serde + toml crate. Structured with `[features]`, `[daemon]`, `[appearance]`, `[limits]`, `[search]` sections. CLI commands: `ggnmem config show` (pretty-print), `ggnmem config set KEY VALUE` (typed validation for all keys). Keys are flat: `capture`, `search`, `tui`, `ai`, `autostart`, `theme`, `max_history`, `index_mode`.
+* **Part B — Profiles**: Created `ggnmem-cli/src/profile.rs`. Three presets: `lite` (capture only, 10K history), `balanced` (default, 100K), `power` (high indexing, 500K). CLI: `ggnmem profile list` shows all profiles + detects active. `ggnmem profile apply <name>` writes config.
+* **Part C — Daemon Management**: Created `ggnmem-cli/src/service.rs`. PID file at `~/.local/state/ggnmem/daemon.pid`. `ggnmem start` spawns daemon background process. `ggnmem stop` sends SIGTERM via `kill` command (no unsafe). `ggnmem restart` = stop + start. Process detection via `/proc/<pid>`.
+* **Part D — Autostart**: In `service.rs`. `ggnmem autostart enable` writes systemd user service (`~/.config/systemd/user/ggnmem-daemon.service`) on native Linux, falls back to shell rc `pgrep` guard on WSL. `ggnmem autostart disable` removes both.
+* **Part E — Doctor Enhancement**: Enhanced `ggnmem doctor` with: config file status, active profile detection, feature flags display (capture/search/tui/ai), max_history, index_mode, PID-aware daemon status, capture enabled check.
+* **Part F — Export**: Created `ggnmem-cli/src/export.rs`. `ggnmem export` outputs command history as JSON (default) or CSV. Supports `--format json|csv` and `--limit N`. Uses existing IPC to query daemon.
+* **Part G — Main.rs Routing**: Added routes for `config`, `profile`, `start`, `stop`, `restart`, `autostart`, `export`. Updated help text with categorized command groups (commands, daemon, config, setup).
+* Added `toml = "0.8"` to workspace dependencies.
+* Updated default config in `setup.rs` and `install.sh` to include all five sections.
+
+### New Files
+
+* `ggnmem-cli/src/config.rs` — Config read/write module (~245 lines)
+* `ggnmem-cli/src/profile.rs` — Profile presets module (~135 lines)
+* `ggnmem-cli/src/service.rs` — Daemon lifecycle + autostart (~380 lines)
+* `ggnmem-cli/src/export.rs` — Export JSON/CSV module (~120 lines)
+
+### Modified Files
+
+* `Cargo.toml` (added toml workspace dep)
+* `ggnmem-cli/Cargo.toml` (added toml dep)
+* `ggnmem-cli/src/main.rs` (new mod declarations, routes, subcommand routers, enhanced doctor)
+* `ggnmem-cli/src/setup.rs` (updated DEFAULT_CONFIG template)
+* `install.sh` (updated config template + next steps)
+* `docs/agent_memory.md` (Phase 9 session log)
+
+### Config System Details
+
+Config file: `~/.config/ggnmem/config.toml`
+
+```toml
+[features]
+capture = true
+search = true
+tui = true
+ai = false
+
+[daemon]
+autostart = false
+
+[appearance]
+theme = "auto"
+
+[limits]
+max_history = 100000
+
+[search]
+index_mode = "balanced"
+```
+
+Config keys for `ggnmem config set`:
+
+| Key | Type | Section | Values |
+|-----|------|---------|--------|
+| capture | bool | features | true/false |
+| search | bool | features | true/false |
+| tui | bool | features | true/false |
+| ai | bool | features | true/false |
+| autostart | bool | daemon | true/false |
+| theme | string | appearance | auto/dark/light |
+| max_history | u64 | limits | any positive number |
+| index_mode | string | search | lite/balanced/power |
+
+### Profile Definitions
+
+| Profile | capture | search | tui | ai | max_history | index_mode |
+|---------|---------|--------|-----|-----|-------------|------------|
+| lite | true | false | false | false | 10,000 | lite |
+| balanced | true | true | true | false | 100,000 | balanced |
+| power | true | true | true | false | 500,000 | power |
+
+### Daemon Management
+
+| Command | Action |
+|---------|--------|
+| `ggnmem start` | Spawn daemon, write PID file |
+| `ggnmem stop` | Read PID, SIGTERM, remove PID file |
+| `ggnmem restart` | stop + start |
+| `ggnmem autostart enable` | systemd service or shell rc fallback |
+| `ggnmem autostart disable` | remove service + shell rc block |
+
+PID file: `~/.local/state/ggnmem/daemon.pid`
+Systemd service: `~/.config/systemd/user/ggnmem-daemon.service`
+
+### Known Limitations (Phase 9)
+
+* Config is read by CLI only — daemon does NOT read config.toml.
+* Feature flags in config are informational — they don't gate CLI behavior yet.
+* max_history limit is not enforced by the daemon (future enhancement).
+* index_mode has no effect on actual search behavior yet.
+* Export requires a running daemon (queries via IPC).
+* Autostart detection: `systemctl --user status` may succeed on WSL2 with systemd.
+* PID tracking uses `/proc/<pid>` — Linux/WSL only.
+
+### Architectural Decisions (Phase 9)
+
+* All new code in `ggnmem-cli` only — no daemon/db changes.
+* Config uses `serde::Deserialize + Serialize` with `#[serde(default)]` for forward compatibility.
+* Profiles modify config directly (no separate profile file).
+* PID management avoids `unsafe` — uses `kill` command for SIGTERM.
+* Autostart markers (`# ggnmem daemon autostart` / `# end ggnmem daemon autostart`) are separate from shell integration markers.
+* Export uses existing IPC protocol — no new daemon endpoints needed.
+
+### Warnings
+
+* Do not implement AI, semantic search, embeddings.
+* Do not modify search, daemon, TUI, or database code.
+* Do not change DB schema.
+* Config is CLI-only — daemon reads environment variables, not config.toml.
+
+---
+
 # Final Directive
 
 Agents must optimize for:
