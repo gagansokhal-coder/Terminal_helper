@@ -1,13 +1,16 @@
 //! Daemon lifecycle management for ggnmem.
 //!
-//! `ggnmem start`     — spawn ggnmem-daemon in background, write PID file.
-//! `ggnmem stop`      — read PID file, send SIGTERM, clean up.
-//! `ggnmem restart`   — stop + start.
-//! `ggnmem autostart enable`  — systemd user service or shell rc fallback.
-//! `ggnmem autostart disable` — remove autostart configuration.
+//! `ggnmem start`              — spawn ggnmem-daemon in background, write PID file.
+//! `ggnmem stop`               — read PID file, send SIGTERM, clean up.
+//! `ggnmem restart`            — stop + start.
+//! `ggnmem logs`               — show daemon log output.
+//! `ggnmem autostart enable`   — systemd user service or shell rc fallback.
+//! `ggnmem autostart disable`  — remove autostart configuration.
+//! `ggnmem autostart status`   — check autostart state.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
@@ -28,6 +31,20 @@ fn pid_path() -> Result<PathBuf> {
     Ok(state_dir()?.join("daemon.pid"))
 }
 
+fn log_dir() -> Result<PathBuf> {
+    Ok(state_dir()?.join("logs"))
+}
+
+fn log_path() -> Result<PathBuf> {
+    Ok(log_dir()?.join("daemon.log"))
+}
+
+fn socket_path() -> Option<PathBuf> {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .map(|dir| dir.join("ggnmem").join("daemon.sock"))
+}
+
 fn daemon_binary() -> String {
     // Check ~/.local/bin first, then fall back to PATH.
     if let Ok(home) = home_dir() {
@@ -46,8 +63,8 @@ fn read_pid() -> Result<Option<u32>> {
     if !path.exists() {
         return Ok(None);
     }
-    let contents = fs::read_to_string(&path)
-        .with_context(|| format!("read PID file: {}", path.display()))?;
+    let contents =
+        fs::read_to_string(&path).with_context(|| format!("read PID file: {}", path.display()))?;
     let pid: u32 = contents
         .trim()
         .parse()
@@ -69,15 +86,72 @@ fn write_pid(pid: u32) -> Result<()> {
 fn remove_pid() -> Result<()> {
     let path = pid_path()?;
     if path.exists() {
-        fs::remove_file(&path)
-            .with_context(|| format!("remove PID file: {}", path.display()))?;
+        fs::remove_file(&path).with_context(|| format!("remove PID file: {}", path.display()))?;
     }
     Ok(())
 }
 
-/// Check if a process with the given PID is still running.
-fn is_process_running(pid: u32) -> bool {
-    Path::new(&format!("/proc/{pid}")).exists()
+/// Check if the daemon is alive by probing the advisory lock on the PID file.
+///
+/// The daemon holds an exclusive `fs2` lock on `daemon.pid` for its entire
+/// lifetime.  If we can acquire a shared lock, no daemon holds the exclusive
+/// lock ⇒ the PID is stale.  If the attempt returns `WouldBlock`, the daemon
+/// is running.
+fn is_process_running(_pid: u32) -> bool {
+    let path = match pid_path() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    if !path.exists() {
+        return false;
+    }
+    let file = match fs::File::open(&path) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    match fs2::FileExt::try_lock_shared(&file) {
+        Ok(()) => {
+            // We got the lock ⇒ nobody holds an exclusive lock ⇒ not running.
+            let _ = fs2::FileExt::unlock(&file);
+            false
+        }
+        Err(e) if e.kind() == fs2::lock_contended_error().kind() => {
+            // Daemon holds the exclusive lock ⇒ running.
+            true
+        }
+        Err(_) => {
+            // Other I/O error — assume not running.
+            false
+        }
+    }
+}
+
+// ─── Stale resource cleanup ─────────────────────────────────────────────────
+
+/// Clean up stale resources from a crashed or improperly-stopped daemon.
+/// Removes stale PID file and socket file if the daemon is not running.
+fn cleanup_stale_resources() -> Result<()> {
+    // Clean stale PID file.
+    if let Some(pid) = read_pid()? {
+        if !is_process_running(pid) {
+            remove_pid()?;
+            println!("  ⚠ cleaned stale PID file (PID {pid} not running)");
+        }
+    }
+
+    // Clean stale socket file.
+    if let Some(sock) = socket_path() {
+        if sock.exists() {
+            // Only remove if no daemon is running.
+            let daemon_running = read_pid()?.map(is_process_running).unwrap_or(false);
+            if !daemon_running {
+                let _ = fs::remove_file(&sock);
+                println!("  ⚠ cleaned stale socket file");
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // ─── Start ───────────────────────────────────────────────────────────────────
@@ -91,14 +165,56 @@ pub fn cmd_start() -> Result<()> {
         }
         // Stale PID file — clean it up.
         remove_pid()?;
+        println!("  ⚠ cleaned stale PID file (PID {pid})");
     }
+
+    // Clean up stale resources before starting.
+    cleanup_stale_resources()?;
+
+    // Ensure log directory exists.
+    let logs = log_dir()?;
+    fs::create_dir_all(&logs).with_context(|| format!("create log dir: {}", logs.display()))?;
+
+    // Open log file for daemon output redirection.
+    let log_file_path = log_path()?;
+    let log_file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file_path)
+        .with_context(|| format!("open log file: {}", log_file_path.display()))?;
+    let log_file_err = log_file
+        .try_clone()
+        .with_context(|| "clone log file handle for stderr")?;
 
     let binary = daemon_binary();
     println!("  starting daemon: {binary}");
+    println!("  logs: {}", log_file_path.display());
 
-    let child = Command::new(&binary)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+    let mut command = Command::new(&binary);
+    if let Ok(cfg) = crate::config::load() {
+        command
+            .env("GGNMEM_LOG_LEVEL", &cfg.daemon.log_level)
+            .env(
+                "GGNMEM_RETENTION_DAYS",
+                cfg.retention.retention_days.to_string(),
+            )
+            .env(
+                "GGNMEM_MAX_COMMANDS",
+                cfg.retention.max_commands.to_string(),
+            )
+            .env(
+                "GGNMEM_AUTO_CLEANUP",
+                if cfg.retention.auto_cleanup {
+                    "true"
+                } else {
+                    "false"
+                },
+            );
+    }
+
+    let child = command
+        .stdout(log_file)
+        .stderr(log_file_err)
         .stdin(std::process::Stdio::null())
         .spawn()
         .with_context(|| format!("spawn daemon: {binary}"))?;
@@ -113,7 +229,10 @@ pub fn cmd_start() -> Result<()> {
         println!("  ✓ daemon started (PID {pid})");
     } else {
         remove_pid()?;
-        bail!("daemon exited immediately after start — check logs");
+        bail!(
+            "daemon exited immediately after start — check logs:\n  {}",
+            log_file_path.display()
+        );
     }
 
     Ok(())
@@ -126,6 +245,7 @@ pub fn cmd_stop() -> Result<()> {
         Some(pid) => {
             if !is_process_running(pid) {
                 remove_pid()?;
+                cleanup_stale_resources()?;
                 println!("  ✗ daemon not running (stale PID {pid} cleaned up)");
                 return Ok(());
             }
@@ -145,6 +265,14 @@ pub fn cmd_stop() -> Result<()> {
                     std::thread::sleep(std::time::Duration::from_millis(200));
                 }
                 remove_pid()?;
+
+                // Clean up socket file after stopping.
+                if let Some(sock) = socket_path() {
+                    if sock.exists() {
+                        let _ = fs::remove_file(&sock);
+                    }
+                }
+
                 println!("  ✓ daemon stopped (PID {pid})");
             } else {
                 println!("  ✗ failed to stop daemon (PID {pid})");
@@ -153,6 +281,8 @@ pub fn cmd_stop() -> Result<()> {
             Ok(())
         }
         None => {
+            // No PID file, but try to clean up any stale resources.
+            cleanup_stale_resources()?;
             println!("  ✗ daemon not running (no PID file)");
             Ok(())
         }
@@ -164,7 +294,56 @@ pub fn cmd_stop() -> Result<()> {
 pub fn cmd_restart() -> Result<()> {
     cmd_stop()?;
     println!();
+    // Brief pause to allow socket release.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    cleanup_stale_resources()?;
     cmd_start()
+}
+
+// ─── Logs ────────────────────────────────────────────────────────────────────
+
+/// `ggnmem logs` — show daemon log output.
+pub fn cmd_logs(args: &[String]) -> Result<()> {
+    let lines: usize = crate::parse_named_arg(args, "--lines")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
+
+    let path = log_path()?;
+    if !path.exists() {
+        println!("no log file found at: {}", path.display());
+        println!("start the daemon with: ggnmem start");
+        return Ok(());
+    }
+
+    let file =
+        fs::File::open(&path).with_context(|| format!("open log file: {}", path.display()))?;
+    let reader = BufReader::new(file);
+    let all_lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
+
+    let start = all_lines.len().saturating_sub(lines);
+    let tail = &all_lines[start..];
+
+    println!("─── {} (last {} lines) ───", path.display(), tail.len());
+    println!();
+    for line in tail {
+        println!("{line}");
+    }
+
+    // Show log file size.
+    if let Ok(meta) = fs::metadata(&path) {
+        let size = meta.len();
+        let size_str = if size < 1024 {
+            format!("{size} B")
+        } else if size < 1024 * 1024 {
+            format!("{:.1} KB", size as f64 / 1024.0)
+        } else {
+            format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+        };
+        println!();
+        println!("── log file: {} ({}) ──", path.display(), size_str);
+    }
+
+    Ok(())
 }
 
 // ─── Status (PID-aware) ─────────────────────────────────────────────────────
@@ -197,6 +376,12 @@ ExecStart=%h/.local/bin/ggnmem-daemon
 Restart=on-failure
 RestartSec=5
 Environment=XDG_RUNTIME_DIR=%t
+Environment=GGNMEM_LOG_LEVEL=info
+Environment=GGNMEM_RETENTION_DAYS=365
+Environment=GGNMEM_MAX_COMMANDS=1000000
+Environment=GGNMEM_AUTO_CLEANUP=true
+StandardOutput=append:%h/.local/state/ggnmem/logs/daemon.log
+StandardError=append:%h/.local/state/ggnmem/logs/daemon.log
 
 [Install]
 WantedBy=default.target
@@ -226,6 +411,10 @@ fn has_systemd() -> bool {
 }
 
 pub fn cmd_autostart_enable() -> Result<()> {
+    // Ensure log directory exists before enabling autostart.
+    let logs = log_dir()?;
+    fs::create_dir_all(&logs).with_context(|| format!("create log dir: {}", logs.display()))?;
+
     if has_systemd() {
         enable_systemd()?;
     } else {
@@ -240,6 +429,87 @@ pub fn cmd_autostart_disable() -> Result<()> {
     }
     // Always clean shell rc too, in case both were set.
     disable_shell_fallback()?;
+    Ok(())
+}
+
+/// `ggnmem autostart status` — check if autostart is configured.
+pub fn cmd_autostart_status() -> Result<()> {
+    println!("ggnmem autostart status");
+    println!("─────────────────────────────────");
+
+    let mut found = false;
+
+    // Check systemd.
+    if has_systemd() {
+        let service_path = systemd_service_path()?;
+        print!("  systemd service ... ");
+        if service_path.exists() {
+            // Check if enabled.
+            let status = Command::new("systemctl")
+                .args(["--user", "is-enabled", "ggnmem-daemon.service"])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .output();
+            match status {
+                Ok(output) => {
+                    let state = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                    println!("{state}");
+                    if state == "enabled" {
+                        found = true;
+                    }
+                }
+                Err(_) => println!("unknown"),
+            }
+
+            // Check if active.
+            let active = Command::new("systemctl")
+                .args(["--user", "is-active", "ggnmem-daemon.service"])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .output();
+            if let Ok(output) = active {
+                let state = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                println!("  service active  ... {state}");
+            }
+        } else {
+            println!("not installed");
+        }
+    } else {
+        println!("  systemd         ... not available");
+    }
+
+    // Check shell rc fallback.
+    for rc_name in &[".bashrc", ".zshrc"] {
+        let rc_path = home_dir()?.join(rc_name);
+        if rc_path.exists() {
+            if let Ok(contents) = fs::read_to_string(&rc_path) {
+                if contents.contains(AUTOSTART_MARKER) {
+                    println!("  shell fallback  ... ✓ configured in {rc_name}");
+                    found = true;
+                }
+            }
+        }
+    }
+
+    if !found {
+        println!();
+        println!("  autostart is not configured.");
+        println!("  enable with: ggnmem autostart enable");
+    }
+
+    // Show daemon status.
+    println!();
+    let (running, pid) = daemon_status()?;
+    if running {
+        if let Some(p) = pid {
+            println!("  daemon          ... ✓ running (PID {p})");
+        } else {
+            println!("  daemon          ... ✓ running");
+        }
+    } else {
+        println!("  daemon          ... ✗ not running");
+    }
+
     Ok(())
 }
 

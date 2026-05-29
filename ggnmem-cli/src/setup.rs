@@ -51,9 +51,16 @@ theme = "auto"
 
 [limits]
 max_history = 100000
+max_memory_mb = 40
+max_db_size_mb = 1024
 
 [search]
 index_mode = "balanced"
+
+[retention]
+retention_days = 365
+max_commands = 1000000
+auto_cleanup = true
 "#;
 
 // ─── Install ─────────────────────────────────────────────────────────────────
@@ -85,7 +92,10 @@ pub fn install() -> Result<()> {
     // 2. Write default config.
     let config_path = config_dir()?.join("config.toml");
     if config_path.exists() {
-        println!("  ✓ config  {} (exists, not overwriting)", config_path.display());
+        println!(
+            "  ✓ config  {} (exists, not overwriting)",
+            config_path.display()
+        );
     } else {
         fs::write(&config_path, DEFAULT_CONFIG)
             .with_context(|| format!("write config: {}", config_path.display()))?;
@@ -233,17 +243,16 @@ const GGNMEM_MARKER_END: &str = "# end ggnmem";
 /// Add shell integration lines to an rc file if not already present.
 fn add_shell_integration(rc_path: &Path, shell: &str) -> Result<()> {
     if rc_path.exists() {
-        let contents = fs::read_to_string(rc_path)
-            .with_context(|| format!("read {}", rc_path.display()))?;
+        let contents =
+            fs::read_to_string(rc_path).with_context(|| format!("read {}", rc_path.display()))?;
         if contents.contains("ggnmem init") {
             println!("  ✓ shell   {} (already configured)", rc_path.display());
             return Ok(());
         }
     }
 
-    let integration = format!(
-        "\n{GGNMEM_MARKER}\neval \"$(ggnmem init {shell})\"\n{GGNMEM_MARKER_END}\n"
-    );
+    let integration =
+        format!("\n{GGNMEM_MARKER}\neval \"$(ggnmem init {shell})\"\n{GGNMEM_MARKER_END}\n");
 
     let mut file = fs::OpenOptions::new()
         .create(true)
@@ -261,8 +270,8 @@ fn add_shell_integration(rc_path: &Path, shell: &str) -> Result<()> {
 
 /// Remove ggnmem integration lines from an rc file.
 fn remove_shell_integration(rc_path: &Path) -> Result<()> {
-    let contents = fs::read_to_string(rc_path)
-        .with_context(|| format!("read {}", rc_path.display()))?;
+    let contents =
+        fs::read_to_string(rc_path).with_context(|| format!("read {}", rc_path.display()))?;
 
     if !contents.contains("ggnmem init") && !contents.contains(GGNMEM_MARKER) {
         return Ok(());
@@ -292,8 +301,7 @@ fn remove_shell_integration(rc_path: &Path) -> Result<()> {
         output.push('\n');
     }
 
-    fs::write(rc_path, &output)
-        .with_context(|| format!("write cleaned {}", rc_path.display()))?;
+    fs::write(rc_path, &output).with_context(|| format!("write cleaned {}", rc_path.display()))?;
 
     println!("  ✗ shell   {} (removed integration)", rc_path.display());
     Ok(())
@@ -302,8 +310,8 @@ fn remove_shell_integration(rc_path: &Path) -> Result<()> {
 /// Add PATH export to rc file if not already present.
 fn add_path_export(rc_path: &Path) -> Result<()> {
     if rc_path.exists() {
-        let contents = fs::read_to_string(rc_path)
-            .with_context(|| format!("read {}", rc_path.display()))?;
+        let contents =
+            fs::read_to_string(rc_path).with_context(|| format!("read {}", rc_path.display()))?;
         if contents.contains(".local/bin") {
             return Ok(());
         }

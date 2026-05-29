@@ -27,6 +27,9 @@ pub struct GgnmemConfig {
 
     #[serde(default = "default_search")]
     pub search: SearchConfig,
+
+    #[serde(default = "default_retention")]
+    pub retention: RetentionConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +51,9 @@ pub struct FeaturesConfig {
 pub struct DaemonSection {
     #[serde(default)]
     pub autostart: bool,
+
+    #[serde(default = "default_log_level")]
+    pub log_level: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,12 +66,30 @@ pub struct AppearanceConfig {
 pub struct LimitsConfig {
     #[serde(default = "default_max_history")]
     pub max_history: u64,
+
+    #[serde(default = "default_max_memory_mb")]
+    pub max_memory_mb: u64,
+
+    #[serde(default = "default_max_db_size_mb")]
+    pub max_db_size_mb: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchConfig {
     #[serde(default = "default_index_mode")]
     pub index_mode: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetentionConfig {
+    #[serde(default = "default_retention_days")]
+    pub retention_days: u32,
+
+    #[serde(default = "default_max_commands")]
+    pub max_commands: u64,
+
+    #[serde(default = "bool_true")]
+    pub auto_cleanup: bool,
 }
 
 // ─── Defaults ────────────────────────────────────────────────────────────────
@@ -82,6 +106,21 @@ fn default_max_history() -> u64 {
 fn default_index_mode() -> String {
     "balanced".to_owned()
 }
+fn default_log_level() -> String {
+    "info".to_owned()
+}
+fn default_max_memory_mb() -> u64 {
+    40
+}
+fn default_max_db_size_mb() -> u64 {
+    1024
+}
+fn default_retention_days() -> u32 {
+    365
+}
+fn default_max_commands() -> u64 {
+    1_000_000
+}
 fn default_features() -> FeaturesConfig {
     FeaturesConfig {
         capture: true,
@@ -91,7 +130,10 @@ fn default_features() -> FeaturesConfig {
     }
 }
 fn default_daemon() -> DaemonSection {
-    DaemonSection { autostart: false }
+    DaemonSection {
+        autostart: false,
+        log_level: default_log_level(),
+    }
 }
 fn default_appearance() -> AppearanceConfig {
     AppearanceConfig {
@@ -101,11 +143,20 @@ fn default_appearance() -> AppearanceConfig {
 fn default_limits() -> LimitsConfig {
     LimitsConfig {
         max_history: default_max_history(),
+        max_memory_mb: default_max_memory_mb(),
+        max_db_size_mb: default_max_db_size_mb(),
     }
 }
 fn default_search() -> SearchConfig {
     SearchConfig {
         index_mode: default_index_mode(),
+    }
+}
+fn default_retention() -> RetentionConfig {
+    RetentionConfig {
+        retention_days: default_retention_days(),
+        max_commands: default_max_commands(),
+        auto_cleanup: true,
     }
 }
 
@@ -117,6 +168,7 @@ impl Default for GgnmemConfig {
             appearance: default_appearance(),
             limits: default_limits(),
             search: default_search(),
+            retention: default_retention(),
         }
     }
 }
@@ -152,9 +204,8 @@ pub fn save(config: &GgnmemConfig) -> Result<()> {
     }
     let contents = toml::to_string_pretty(config).context("serialize config")?;
     // Add a header comment.
-    let output = format!(
-        "# ggnmem configuration\n# See: https://github.com/ggnmem/ggnmem\n\n{contents}"
-    );
+    let output =
+        format!("# ggnmem configuration\n# See: https://github.com/ggnmem/ggnmem\n\n{contents}");
     fs::write(&path, output).with_context(|| format!("write config: {}", path.display()))?;
     Ok(())
 }
@@ -183,15 +234,23 @@ pub fn cmd_show() -> Result<()> {
     println!();
     println!("  [daemon]");
     println!("    autostart    = {}", config.daemon.autostart);
+    println!("    log_level    = \"{}\"", config.daemon.log_level);
     println!();
     println!("  [appearance]");
     println!("    theme        = \"{}\"", config.appearance.theme);
     println!();
     println!("  [limits]");
     println!("    max_history  = {}", config.limits.max_history);
+    println!("    max_memory_mb = {}", config.limits.max_memory_mb);
+    println!("    max_db_size_mb = {}", config.limits.max_db_size_mb);
     println!();
     println!("  [search]");
     println!("    index_mode   = \"{}\"", config.search.index_mode);
+    println!();
+    println!("  [retention]");
+    println!("    retention_days = {}", config.retention.retention_days);
+    println!("    max_commands   = {}", config.retention.max_commands);
+    println!("    auto_cleanup   = {}", config.retention.auto_cleanup);
 
     Ok(())
 }
@@ -226,9 +285,37 @@ pub fn cmd_set(args: &[String]) -> Result<()> {
             }
             config.search.index_mode = value.clone();
         }
+        "log_level" => {
+            let level = value.to_lowercase();
+            if !["error", "warn", "info", "debug"].contains(&level.as_str()) {
+                bail!("log_level must be one of: error, warn, info, debug");
+            }
+            config.daemon.log_level = level;
+        }
+        "max_memory_mb" => {
+            config.limits.max_memory_mb = value
+                .parse::<u64>()
+                .context("max_memory_mb must be a positive number")?;
+        }
+        "max_db_size_mb" => {
+            config.limits.max_db_size_mb = value
+                .parse::<u64>()
+                .context("max_db_size_mb must be a positive number")?;
+        }
+        "retention_days" => {
+            config.retention.retention_days = value
+                .parse::<u32>()
+                .context("retention_days must fit in u32")?;
+        }
+        "max_commands" => {
+            config.retention.max_commands = value
+                .parse::<u64>()
+                .context("max_commands must be a positive number")?;
+        }
+        "auto_cleanup" => config.retention.auto_cleanup = parse_bool(value)?,
         other => {
             bail!(
-                "unknown config key: {other}\n\navailable keys:\n  capture, search, tui, ai, autostart, theme, max_history, index_mode"
+                "unknown config key: {other}\n\navailable keys:\n  capture, search, tui, ai, autostart, log_level, theme, max_history, max_memory_mb, max_db_size_mb, index_mode, retention_days, max_commands, auto_cleanup"
             );
         }
     }

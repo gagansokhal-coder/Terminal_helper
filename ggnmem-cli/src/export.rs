@@ -86,9 +86,7 @@ fn parse_limit(args: &[String]) -> u32 {
 
 // ─── JSON export ─────────────────────────────────────────────────────────────
 
-fn export_json(
-    commands: &[ggnmem_daemon::protocol::CommandSummary],
-) -> Result<()> {
+fn export_json(commands: &[ggnmem_daemon::protocol::CommandSummary]) -> Result<()> {
     let json = serde_json::to_string_pretty(commands).context("serialize to JSON")?;
     println!("{json}");
     Ok(())
@@ -96,23 +94,15 @@ fn export_json(
 
 // ─── CSV export ──────────────────────────────────────────────────────────────
 
-fn export_csv(
-    commands: &[ggnmem_daemon::protocol::CommandSummary],
-) -> Result<()> {
+fn export_csv(commands: &[ggnmem_daemon::protocol::CommandSummary]) -> Result<()> {
     // Header.
     println!("command,cwd,exit_code,duration_ms,completed_at_ms,session_id");
 
     for cmd in commands {
         let command = csv_escape(&cmd.command);
         let cwd = csv_escape(&cmd.cwd);
-        let exit_code = cmd
-            .exit_code
-            .map(|c| c.to_string())
-            .unwrap_or_default();
-        let duration_ms = cmd
-            .duration_ms
-            .map(|d| d.to_string())
-            .unwrap_or_default();
+        let exit_code = cmd.exit_code.map(|c| c.to_string()).unwrap_or_default();
+        let duration_ms = cmd.duration_ms.map(|d| d.to_string()).unwrap_or_default();
         let session_id = csv_escape(&cmd.session_id);
 
         println!(

@@ -33,7 +33,7 @@ impl DatabaseConfig {
         Self {
             path,
             busy_timeout_ms: 2_000,
-            mmap_size_bytes: 30_000_000_000,
+            mmap_size_bytes: 67_108_864,
         }
     }
 }

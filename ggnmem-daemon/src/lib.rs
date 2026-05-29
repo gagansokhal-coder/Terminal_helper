@@ -7,6 +7,7 @@ pub mod logging;
 pub mod platform;
 pub mod protocol;
 pub mod queue;
+pub mod retention;
 pub mod storage;
 
 pub use config::DaemonConfig;

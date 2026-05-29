@@ -10,7 +10,11 @@ use crate::{
 
 const DEFAULT_QUEUE_CAPACITY: usize = 1024;
 const DEFAULT_MAX_RETRIES: u8 = 3;
-const DEFAULT_IDLE_MEMORY_TARGET_MB: u64 = 50;
+const DEFAULT_IDLE_MEMORY_TARGET_MB: u64 = 40;
+const DEFAULT_MAX_LOG_SIZE_BYTES: u64 = 5 * 1024 * 1024;
+const DEFAULT_CLEANUP_INTERVAL_SECS: u64 = 86400; // 24 hours
+const DEFAULT_RETENTION_DAYS: u32 = 365;
+const DEFAULT_MAX_COMMANDS: u64 = 1_000_000;
 const SOCKET_FILE_NAME: &str = "daemon.sock";
 const DATABASE_FILE_NAME: &str = "ggnmem.db";
 
@@ -21,6 +25,13 @@ pub struct DaemonConfig {
     pub queue_capacity: usize,
     pub max_retries: u8,
     pub idle_memory_target_mb: u64,
+    pub log_level: String,
+    pub log_dir: PathBuf,
+    pub max_log_size_bytes: u64,
+    pub cleanup_interval_secs: u64,
+    pub cleanup_enabled: bool,
+    pub retention_days: u32,
+    pub max_commands: u64,
 }
 
 impl DaemonConfig {
@@ -34,17 +45,38 @@ impl DaemonConfig {
                 "GGNMEM_IDLE_MEMORY_TARGET_MB",
                 DEFAULT_IDLE_MEMORY_TARGET_MB,
             )?,
+            log_level: parse_env_string("GGNMEM_LOG_LEVEL", "info"),
+            log_dir: default_log_dir()?,
+            max_log_size_bytes: parse_env_u64("GGNMEM_MAX_LOG_BYTES", DEFAULT_MAX_LOG_SIZE_BYTES)?,
+            cleanup_interval_secs: parse_env_u64(
+                "GGNMEM_CLEANUP_INTERVAL_SECS",
+                DEFAULT_CLEANUP_INTERVAL_SECS,
+            )?,
+            cleanup_enabled: parse_env_bool(
+                "GGNMEM_AUTO_CLEANUP",
+                parse_env_bool("GGNMEM_CLEANUP_ENABLED", true),
+            ),
+            retention_days: parse_env_u32("GGNMEM_RETENTION_DAYS", DEFAULT_RETENTION_DAYS)?,
+            max_commands: parse_env_u64("GGNMEM_MAX_COMMANDS", DEFAULT_MAX_COMMANDS)?,
         })
     }
 
     #[must_use]
     pub fn new(endpoint: IpcEndpoint, database_path: PathBuf) -> Self {
+        let log_dir = default_log_dir().unwrap_or_else(|_| PathBuf::from("/tmp/ggnmem/logs"));
         Self {
             endpoint,
             database_path,
             queue_capacity: DEFAULT_QUEUE_CAPACITY,
             max_retries: DEFAULT_MAX_RETRIES,
             idle_memory_target_mb: DEFAULT_IDLE_MEMORY_TARGET_MB,
+            log_level: "info".to_owned(),
+            log_dir,
+            max_log_size_bytes: DEFAULT_MAX_LOG_SIZE_BYTES,
+            cleanup_interval_secs: DEFAULT_CLEANUP_INTERVAL_SECS,
+            cleanup_enabled: true,
+            retention_days: DEFAULT_RETENTION_DAYS,
+            max_commands: DEFAULT_MAX_COMMANDS,
         }
     }
 
@@ -96,6 +128,44 @@ fn parse_env_u64(name: &str, default: u64) -> DaemonResult<u64> {
             "{name} could not be read: {error}"
         ))),
     }
+}
+
+fn parse_env_u32(name: &str, default: u32) -> DaemonResult<u32> {
+    match env::var(name) {
+        Ok(value) => value
+            .parse::<u32>()
+            .map_err(|_| DaemonError::InvalidConfig(format!("{name} must fit in u32"))),
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(error) => Err(DaemonError::InvalidConfig(format!(
+            "{name} could not be read: {error}"
+        ))),
+    }
+}
+
+fn parse_env_string(name: &str, default: &str) -> String {
+    env::var(name).unwrap_or_else(|_| default.to_owned())
+}
+
+fn parse_env_bool(name: &str, default: bool) -> bool {
+    match env::var(name) {
+        Ok(val) => match val.to_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => true,
+            "false" | "0" | "no" | "off" => false,
+            _ => default,
+        },
+        Err(_) => default,
+    }
+}
+
+fn default_log_dir() -> DaemonResult<PathBuf> {
+    let home = env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| DaemonError::InvalidConfig("HOME is not set".to_owned()))?;
+    Ok(home
+        .join(".local")
+        .join("state")
+        .join("ggnmem")
+        .join("logs"))
 }
 
 #[cfg(unix)]

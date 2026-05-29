@@ -20,19 +20,19 @@ const PROFILES: &[Profile] = &[
     Profile {
         name: "lite",
         description: "Low RAM, capture only",
-        detail: "capture=true, search=false, tui=false, ai=false, max_history=10000",
+        detail: "capture=true, search=false, tui=false, ai=false, max_history=10000, max_commands=10000",
         apply: apply_lite,
     },
     Profile {
         name: "balanced",
         description: "Default — search + TUI enabled",
-        detail: "capture=true, search=true, tui=true, ai=false, max_history=100000",
+        detail: "capture=true, search=true, tui=true, ai=false, max_history=100000, max_commands=1000000",
         apply: apply_balanced,
     },
     Profile {
         name: "power",
         description: "High indexing, future AI ready",
-        detail: "capture=true, search=true, tui=true, ai=false, max_history=500000",
+        detail: "capture=true, search=true, tui=true, ai=false, max_history=500000, max_commands=1000000",
         apply: apply_power,
     },
 ];
@@ -43,6 +43,8 @@ fn apply_lite(cfg: &mut GgnmemConfig) {
     cfg.features.tui = false;
     cfg.features.ai = false;
     cfg.limits.max_history = 10_000;
+    cfg.retention.max_commands = 10_000;
+    cfg.retention.auto_cleanup = true;
     cfg.search.index_mode = "lite".to_owned();
 }
 
@@ -52,6 +54,8 @@ fn apply_balanced(cfg: &mut GgnmemConfig) {
     cfg.features.tui = true;
     cfg.features.ai = false;
     cfg.limits.max_history = 100_000;
+    cfg.retention.max_commands = 1_000_000;
+    cfg.retention.auto_cleanup = true;
     cfg.search.index_mode = "balanced".to_owned();
 }
 
@@ -61,6 +65,8 @@ fn apply_power(cfg: &mut GgnmemConfig) {
     cfg.features.tui = true;
     cfg.features.ai = false;
     cfg.limits.max_history = 500_000;
+    cfg.retention.max_commands = 1_000_000;
+    cfg.retention.auto_cleanup = true;
     cfg.search.index_mode = "power".to_owned();
 }
 
@@ -91,14 +97,9 @@ pub fn cmd_list() -> Result<()> {
 
 /// `ggnmem profile apply <name>` — apply a named profile.
 pub fn cmd_apply(args: &[String]) -> Result<()> {
-    let name = args
-        .get(3)
-        .map(String::as_str)
-        .unwrap_or("");
+    let name = args.get(3).map(String::as_str).unwrap_or("");
 
-    let profile = PROFILES
-        .iter()
-        .find(|p| p.name == name);
+    let profile = PROFILES.iter().find(|p| p.name == name);
 
     match profile {
         Some(p) => {
@@ -127,7 +128,10 @@ pub fn detect_profile(cfg: &GgnmemConfig) -> Option<&'static str> {
         return None;
     }
 
-    if !cfg.features.search && !cfg.features.tui && !cfg.features.ai && cfg.limits.max_history <= 10_000
+    if !cfg.features.search
+        && !cfg.features.tui
+        && !cfg.features.ai
+        && cfg.limits.max_history <= 10_000
     {
         return Some("lite");
     }
@@ -141,10 +145,7 @@ pub fn detect_profile(cfg: &GgnmemConfig) -> Option<&'static str> {
         return Some("balanced");
     }
 
-    if cfg.features.search
-        && cfg.features.tui
-        && cfg.limits.max_history >= 400_000
-    {
+    if cfg.features.search && cfg.features.tui && cfg.limits.max_history >= 400_000 {
         return Some("power");
     }
 

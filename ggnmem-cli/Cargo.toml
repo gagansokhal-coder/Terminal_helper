@@ -11,11 +11,13 @@ authors.workspace = true
 [dependencies]
 anyhow.workspace = true
 crossterm.workspace = true
+fs2.workspace = true
 ggnmem-daemon = { path = "../ggnmem-daemon" }
 ggnmem-db = { path = "../ggnmem-db" }
 ratatui.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 tokio.workspace = true
 uuid.workspace = true
 

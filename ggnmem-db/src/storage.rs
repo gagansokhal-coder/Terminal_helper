@@ -1,4 +1,6 @@
-use rusqlite::{named_params, Connection, OptionalExtension};
+use std::time::Instant;
+
+use rusqlite::{named_params, Connection, ErrorCode, OptionalExtension};
 
 use crate::{
     config::DatabaseConfig,
@@ -103,7 +105,9 @@ impl Database {
             ON CONFLICT(content_hash) DO UPDATE SET
                 updated_at_ms = excluded.updated_at_ms,
                 exit_code = excluded.exit_code,
-                duration_ms = excluded.duration_ms
+                duration_ms = excluded.duration_ms,
+                started_at_ms = excluded.started_at_ms,
+                completed_at_ms = excluded.completed_at_ms
             "#,
             named_params! {
                 ":id": command.id.as_str(),
@@ -588,7 +592,7 @@ impl Database {
     /// the FTS index where the command text matches known internal patterns
     /// (e.g. `ggnmem %`, `history`, `clear`, `exit`).
     ///
-    /// Runs `VACUUM` afterwards to reclaim disk space.
+    /// Disk compaction is handled by the explicit optimize path.
     pub fn cleanup_internal_commands(&self) -> DbResult<CleanupStats> {
         let before = self.count_commands()?;
 
@@ -621,10 +625,483 @@ impl Database {
         let remaining = self.count_commands()?;
         let removed = before.saturating_sub(remaining);
 
-        // Reclaim disk space. Safe to ignore errors here.
-        let _ = self.connection.execute_batch("VACUUM;");
-
         Ok(CleanupStats { removed, remaining })
+    }
+
+    // ─── Phase 11: Database Optimization ─────────────────────────────────────
+
+    /// Run `PRAGMA optimize` + `ANALYZE` and compact free pages when safe.
+    pub fn optimize(&self) -> DbResult<crate::domain::OptimizeStats> {
+        let before_size_bytes = self.database_size_bytes()?;
+        let start = Instant::now();
+
+        self.connection.execute_batch("PRAGMA optimize; ANALYZE;")?;
+
+        let vacuum_ran = if self.connection.is_autocommit() && self.freelist_count()? > 0 {
+            match self.connection.execute_batch("VACUUM;") {
+                Ok(()) => true,
+                Err(rusqlite::Error::SqliteFailure(error, _))
+                    if matches!(
+                        error.code,
+                        ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked
+                    ) =>
+                {
+                    false
+                }
+                Err(error) => return Err(error.into()),
+            }
+        } else {
+            false
+        };
+
+        self.connection
+            .execute_batch("PRAGMA wal_checkpoint(PASSIVE);")?;
+
+        let after_size_bytes = self.database_size_bytes()?;
+        let elapsed_ms = start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        let now = crate::time::unix_epoch_millis();
+        self.set_last_optimize_at_ms(now)?;
+
+        Ok(crate::domain::OptimizeStats {
+            before_size_bytes,
+            after_size_bytes,
+            elapsed_ms,
+            vacuum_ran,
+        })
+    }
+
+    /// Run `VACUUM` to defragment and compact the database file.
+    pub fn vacuum(&self) -> DbResult<()> {
+        self.connection.execute_batch("VACUUM;")?;
+        Ok(())
+    }
+
+    /// Collect database-level statistics.
+    pub fn db_stats(&self) -> DbResult<crate::domain::DbStats> {
+        let command_count = self.count_commands()?;
+        let session_count: u64 =
+            self.connection
+                .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?;
+        let metadata_count: u64 =
+            self.connection
+                .query_row("SELECT COUNT(*) FROM command_metadata", [], |row| {
+                    row.get(0)
+                })?;
+        let queue_count: u64 =
+            self.connection
+                .query_row("SELECT COUNT(*) FROM command_queue", [], |row| row.get(0))?;
+        let page_size = self.page_size()?;
+        let page_count = self.page_count()?;
+        let freelist_count = self.freelist_count()?;
+        let db_size_bytes = page_size * page_count;
+
+        // FTS shadow table row count (best-effort).
+        let fts_row_count: u64 = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM commands_fts", [], |row| row.get(0))
+            .unwrap_or(0);
+        let duplicate_count_estimate = self.duplicate_count_estimate()?;
+        let last_optimize_at_ms = self.get_last_optimize_at_ms()?;
+
+        Ok(crate::domain::DbStats {
+            command_count,
+            session_count,
+            metadata_count,
+            queue_count,
+            db_size_bytes,
+            page_size,
+            page_count,
+            freelist_count,
+            fts_row_count,
+            duplicate_count_estimate,
+            last_optimize_at_ms,
+        })
+    }
+
+    /// Collect high-level usage statistics for `ggnmem stats`.
+    pub fn usage_stats(&self) -> DbResult<crate::domain::UsageStats> {
+        let total_commands = self.count_commands()?;
+        let unique_commands: u64 = self.connection.query_row(
+            "SELECT COUNT(DISTINCT normalized_command) FROM commands",
+            [],
+            |row| row.get(0),
+        )?;
+        let total_sessions: u64 =
+            self.connection
+                .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?;
+        let searches_performed = self.searches_performed()?;
+        let deduplicated_commands: u64 = self.connection.query_row(
+            "SELECT COUNT(*) FROM command_metadata WHERE run_count > 1",
+            [],
+            |row| row.get(0),
+        )?;
+
+        // Top 10 most-used commands by run_count.
+        let mut stmt = self.connection.prepare(
+            r#"
+            SELECT c.normalized_command, m.run_count
+            FROM command_metadata m
+            JOIN commands c ON c.id = m.command_id
+            ORDER BY m.run_count DESC
+            LIMIT 10
+            "#,
+        )?;
+        let most_used: Vec<(String, u64)> = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
+            })?
+            .filter_map(Result::ok)
+            .collect();
+
+        // DB file size (best-effort from PRAGMA).
+        let db_size_bytes = self.database_size_bytes()?;
+        let (last_cleanup_at_ms, last_cleanup_removed, last_cleanup_remaining) =
+            self.cleanup_history()?;
+        let last_optimize_at_ms = self.get_last_optimize_at_ms()?;
+
+        Ok(crate::domain::UsageStats {
+            total_commands,
+            unique_commands,
+            total_sessions,
+            searches_performed,
+            deduplicated_commands,
+            most_used,
+            db_size_bytes,
+            last_cleanup_at_ms,
+            last_cleanup_removed,
+            last_cleanup_remaining,
+            last_optimize_at_ms,
+        })
+    }
+
+    // ─── Phase 11: Cleanup Engine ────────────────────────────────────────────
+
+    /// Remove commands that failed (non-zero exit code) and were only run once.
+    pub fn cleanup_failed(&self) -> DbResult<CleanupStats> {
+        let before = self.count_commands()?;
+
+        self.connection.execute_batch(
+            r#"
+            DELETE FROM command_queue WHERE command_id IN (
+                SELECT c.id FROM commands c
+                JOIN command_metadata m ON m.command_id = c.id
+                WHERE c.exit_code IS NOT NULL AND c.exit_code != 0
+                AND m.run_count = 1
+            );
+            DELETE FROM command_metadata WHERE command_id IN (
+                SELECT c.id FROM commands c
+                JOIN command_metadata m ON m.command_id = c.id
+                WHERE c.exit_code IS NOT NULL AND c.exit_code != 0
+                AND m.run_count = 1
+            );
+            DELETE FROM commands WHERE id IN (
+                SELECT c.id FROM commands c
+                LEFT JOIN command_metadata m ON m.command_id = c.id
+                WHERE c.exit_code IS NOT NULL AND c.exit_code != 0
+                AND (m.run_count IS NULL OR m.run_count = 1)
+            );
+            "#,
+        )?;
+
+        let remaining = self.count_commands()?;
+        Ok(CleanupStats {
+            removed: before.saturating_sub(remaining),
+            remaining,
+        })
+    }
+
+    /// Remove commands older than the given number of days.
+    pub fn cleanup_older_than(&self, days: u32) -> DbResult<CleanupStats> {
+        let before = self.count_commands()?;
+        let cutoff_ms = crate::time::unix_epoch_millis() - (days as i64 * 24 * 60 * 60 * 1000);
+
+        self.connection.execute(
+            "DELETE FROM command_queue WHERE command_id IN (SELECT id FROM commands WHERE completed_at_ms < ?1)",
+            [cutoff_ms],
+        )?;
+        self.connection.execute(
+            "DELETE FROM command_metadata WHERE command_id IN (SELECT id FROM commands WHERE completed_at_ms < ?1)",
+            [cutoff_ms],
+        )?;
+        self.connection.execute(
+            "DELETE FROM commands WHERE completed_at_ms < ?1",
+            [cutoff_ms],
+        )?;
+
+        let remaining = self.count_commands()?;
+        Ok(CleanupStats {
+            removed: before.saturating_sub(remaining),
+            remaining,
+        })
+    }
+
+    /// Remove true duplicate rows (same content_hash appearing more than once).
+    /// Should be rare because of the UNIQUE constraint, but handles edge cases.
+    pub fn cleanup_duplicates(&self) -> DbResult<CleanupStats> {
+        let before = self.count_commands()?;
+
+        // Keep the row with the latest updated_at_ms for each content_hash.
+        self.connection.execute_batch(
+            r#"
+            DELETE FROM command_queue WHERE command_id IN (
+                SELECT id FROM commands
+                WHERE rowid NOT IN (
+                    SELECT MIN(rowid) FROM commands GROUP BY content_hash
+                )
+            );
+            DELETE FROM command_metadata WHERE command_id IN (
+                SELECT id FROM commands
+                WHERE rowid NOT IN (
+                    SELECT MIN(rowid) FROM commands GROUP BY content_hash
+                )
+            );
+            DELETE FROM commands
+            WHERE rowid NOT IN (
+                SELECT MIN(rowid) FROM commands GROUP BY content_hash
+            );
+            "#,
+        )?;
+
+        let remaining = self.count_commands()?;
+        Ok(CleanupStats {
+            removed: before.saturating_sub(remaining),
+            remaining,
+        })
+    }
+
+    /// Enforce retention policy: remove commands older than max_age_days,
+    /// then trim to max_commands if still over the limit.
+    pub fn cleanup_by_retention(
+        &self,
+        max_age_days: u32,
+        max_commands: u64,
+    ) -> DbResult<CleanupStats> {
+        let before = self.count_commands()?;
+
+        // Step 1: age-based cleanup.
+        if max_age_days > 0 {
+            let cutoff_ms =
+                crate::time::unix_epoch_millis() - (max_age_days as i64 * 24 * 60 * 60 * 1000);
+            self.connection.execute(
+                "DELETE FROM command_queue WHERE command_id IN (SELECT id FROM commands WHERE completed_at_ms < ?1)",
+                [cutoff_ms],
+            )?;
+            self.connection.execute(
+                "DELETE FROM command_metadata WHERE command_id IN (SELECT id FROM commands WHERE completed_at_ms < ?1)",
+                [cutoff_ms],
+            )?;
+            self.connection.execute(
+                "DELETE FROM commands WHERE completed_at_ms < ?1",
+                [cutoff_ms],
+            )?;
+        }
+
+        // Step 2: count-based trim — keep only the N most recent.
+        if max_commands > 0 {
+            let current = self.count_commands()?;
+            if current > max_commands {
+                self.connection.execute(
+                    r#"
+                    DELETE FROM command_queue WHERE command_id IN (
+                        SELECT id FROM commands
+                        ORDER BY completed_at_ms DESC
+                        LIMIT -1 OFFSET ?1
+                    )
+                    "#,
+                    [max_commands],
+                )?;
+                self.connection.execute(
+                    r#"
+                    DELETE FROM command_metadata WHERE command_id IN (
+                        SELECT id FROM commands
+                        ORDER BY completed_at_ms DESC
+                        LIMIT -1 OFFSET ?1
+                    )
+                    "#,
+                    [max_commands],
+                )?;
+                self.connection.execute(
+                    r#"
+                    DELETE FROM commands WHERE id NOT IN (
+                        SELECT id FROM commands
+                        ORDER BY completed_at_ms DESC
+                        LIMIT ?1
+                    )
+                    "#,
+                    [max_commands],
+                )?;
+            }
+        }
+
+        let remaining = self.count_commands()?;
+        Ok(CleanupStats {
+            removed: before.saturating_sub(remaining),
+            remaining,
+        })
+    }
+
+    /// Dispatch cleanup based on the requested mode.
+    pub fn cleanup_by_mode(&self, mode: &crate::domain::CleanupMode) -> DbResult<CleanupStats> {
+        use crate::domain::CleanupMode;
+        let stats = match mode {
+            CleanupMode::Internal => self.cleanup_internal_commands(),
+            CleanupMode::Duplicates => self.cleanup_duplicates(),
+            CleanupMode::Failed => self.cleanup_failed(),
+            CleanupMode::OlderThan(days) => self.cleanup_older_than(*days),
+            CleanupMode::Retention {
+                max_age_days,
+                max_commands,
+            } => self.cleanup_by_retention(*max_age_days, *max_commands),
+        }?;
+        self.record_cleanup(crate::time::unix_epoch_millis(), stats)?;
+        Ok(stats)
+    }
+
+    /// Run the daemon-owned automatic cleanup policy.
+    pub fn run_automatic_cleanup(
+        &self,
+        max_age_days: u32,
+        max_commands: u64,
+    ) -> DbResult<CleanupStats> {
+        let internal = self.cleanup_internal_commands()?;
+        let retention = self.cleanup_by_retention(max_age_days, max_commands)?;
+        let stats = CleanupStats {
+            removed: internal.removed + retention.removed,
+            remaining: retention.remaining,
+        };
+        self.record_cleanup(crate::time::unix_epoch_millis(), stats)?;
+        Ok(stats)
+    }
+
+    // ─── Phase 11: Hybrid Retention Scheduling ───────────────────────────────
+
+    /// Get the timestamp (ms since epoch) of the last cleanup run.
+    pub fn get_last_cleanup_at_ms(&self) -> DbResult<i64> {
+        self.connection
+            .query_row(
+                "SELECT last_cleanup_at_ms FROM retention_meta WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
+    /// Update the last cleanup timestamp to now.
+    pub fn set_last_cleanup_at_ms(&self, now_ms: i64) -> DbResult<()> {
+        self.connection.execute(
+            "UPDATE retention_meta SET last_cleanup_at_ms = ?1 WHERE id = 1",
+            [now_ms],
+        )?;
+        self.connection.execute(
+            "UPDATE maintenance_meta SET last_cleanup_at_ms = ?1 WHERE id = 1",
+            [now_ms],
+        )?;
+        Ok(())
+    }
+
+    pub fn record_cleanup(&self, now_ms: i64, stats: CleanupStats) -> DbResult<()> {
+        self.set_last_cleanup_at_ms(now_ms)?;
+        let removed = stats.removed.min(i64::MAX as u64) as i64;
+        let remaining = stats.remaining.min(i64::MAX as u64) as i64;
+        self.connection.execute(
+            r#"
+            UPDATE maintenance_meta
+            SET
+                last_cleanup_removed = ?1,
+                last_cleanup_remaining = ?2
+            WHERE id = 1
+            "#,
+            [removed, remaining],
+        )?;
+        Ok(())
+    }
+
+    pub fn record_search_performed(&self) -> DbResult<()> {
+        self.connection.execute(
+            r#"
+            UPDATE maintenance_meta
+            SET searches_performed = searches_performed + 1
+            WHERE id = 1
+            "#,
+            [],
+        )?;
+        Ok(())
+    }
+
+    fn page_size(&self) -> DbResult<u64> {
+        Ok(self
+            .connection
+            .pragma_query_value(None, "page_size", |row| row.get(0))?)
+    }
+
+    fn page_count(&self) -> DbResult<u64> {
+        Ok(self
+            .connection
+            .pragma_query_value(None, "page_count", |row| row.get(0))?)
+    }
+
+    fn freelist_count(&self) -> DbResult<u64> {
+        Ok(self
+            .connection
+            .pragma_query_value(None, "freelist_count", |row| row.get(0))?)
+    }
+
+    fn database_size_bytes(&self) -> DbResult<u64> {
+        Ok(self.page_size()? * self.page_count()?)
+    }
+
+    fn duplicate_count_estimate(&self) -> DbResult<u64> {
+        let count: i64 = self.connection.query_row(
+            "SELECT COALESCE(SUM(run_count - 1), 0) FROM command_metadata WHERE run_count > 1",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count.max(0) as u64)
+    }
+
+    fn searches_performed(&self) -> DbResult<u64> {
+        let count: i64 = self.connection.query_row(
+            "SELECT searches_performed FROM maintenance_meta WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count.max(0) as u64)
+    }
+
+    fn cleanup_history(&self) -> DbResult<(i64, u64, u64)> {
+        let (last_cleanup_at_ms, removed, remaining): (i64, i64, i64) = self.connection.query_row(
+            r#"
+            SELECT
+                last_cleanup_at_ms,
+                last_cleanup_removed,
+                last_cleanup_remaining
+            FROM maintenance_meta
+            WHERE id = 1
+            "#,
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        Ok((
+            last_cleanup_at_ms,
+            removed.max(0) as u64,
+            remaining.max(0) as u64,
+        ))
+    }
+
+    fn get_last_optimize_at_ms(&self) -> DbResult<i64> {
+        Ok(self.connection.query_row(
+            "SELECT last_optimize_at_ms FROM maintenance_meta WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )?)
+    }
+
+    fn set_last_optimize_at_ms(&self, now_ms: i64) -> DbResult<()> {
+        self.connection.execute(
+            "UPDATE maintenance_meta SET last_optimize_at_ms = ?1 WHERE id = 1",
+            [now_ms],
+        )?;
+        Ok(())
     }
 }
 
@@ -703,6 +1180,39 @@ mod tests {
         }
 
         (temp, database, session_id)
+    }
+
+    #[test]
+    fn test_retention_meta_defaults_to_zero() {
+        let temp = NamedTempFile::new().expect("temp db");
+        let database = Database::open(&DatabaseConfig::new(temp.path().to_path_buf()))
+            .expect("database opens");
+
+        assert_eq!(
+            database
+                .get_last_cleanup_at_ms()
+                .expect("last cleanup timestamp"),
+            0
+        );
+    }
+
+    #[test]
+    fn test_set_and_get_last_cleanup() {
+        let temp = NamedTempFile::new().expect("temp db");
+        let database = Database::open(&DatabaseConfig::new(temp.path().to_path_buf()))
+            .expect("database opens");
+        let timestamp = 1_725_123_456_789_i64;
+
+        database
+            .set_last_cleanup_at_ms(timestamp)
+            .expect("timestamp updates");
+
+        assert_eq!(
+            database
+                .get_last_cleanup_at_ms()
+                .expect("last cleanup timestamp"),
+            timestamp
+        );
     }
 
     #[test]
@@ -1183,5 +1693,63 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ─── Phase 11: Stress Test ───────────────────────────────────────────────
+
+    #[test]
+    #[ignore] // Run manually with: cargo test stress_test_100k_commands -- --ignored
+    fn stress_test_100k_commands() {
+        let temp = NamedTempFile::new().expect("temp file");
+        let path = temp.path().to_path_buf();
+        let database = Database::open(&crate::config::DatabaseConfig::new(path)).expect("db");
+
+        let base_ts = 1_700_000_000_000_i64;
+        let session = crate::domain::NewSession {
+            id: crate::domain::SessionId::from_storage("stress-session".to_string()),
+            os_context: "linux".to_string(),
+            hostname: "test".to_string(),
+            shell: Some("bash".to_string()),
+            started_at_ms: base_ts,
+        };
+        database.insert_session(&session).expect("insert session");
+
+        let start_insert = Instant::now();
+        for i in 0..100_000 {
+            let cmd_text = format!("git commit -m \"stress test insert {}\"", i);
+            database
+                .insert_command(&crate::domain::NewCommand {
+                    id: crate::domain::CommandId::from_storage(format!("cmd-{}", i)),
+                    session_id: crate::domain::SessionId::from_storage(
+                        "stress-session".to_string(),
+                    ),
+                    command: cmd_text,
+                    cwd: "/home/user/project".to_string(),
+                    exit_code: Some(0),
+                    duration_ms: Some(10),
+                    started_at_ms: Some(base_ts + i as i64),
+                    completed_at_ms: base_ts + i as i64,
+                })
+                .unwrap();
+        }
+        let insert_elapsed = start_insert.elapsed();
+
+        // Optimize
+        let start_opt = Instant::now();
+        database.optimize().unwrap();
+        let opt_elapsed = start_opt.elapsed();
+
+        // Search
+        let start_search = Instant::now();
+        let opts = SearchOptions::new("stress test insert 9999").with_limit(10);
+        let results = database.search_commands_v2(&opts).unwrap();
+        let search_elapsed = start_search.elapsed();
+
+        assert!(!results.is_empty(), "should find the test command");
+
+        println!(
+            "100k commands stress test:\n  insert: {:?}\n  optimize+vacuum: {:?}\n  search: {:?}",
+            insert_elapsed, opt_elapsed, search_elapsed
+        );
     }
 }

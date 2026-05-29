@@ -1,4 +1,4 @@
-use ggnmem_db::MatchKind;
+use ggnmem_db::{CleanupMode, MatchKind};
 use serde::{Deserialize, Serialize};
 
 use crate::health::HealthStatus;
@@ -87,6 +87,16 @@ pub enum DaemonRequest {
     },
     CleanupCommands {
         version: ProtocolVersion,
+        mode: CleanupMode,
+    },
+    OptimizeDb {
+        version: ProtocolVersion,
+    },
+    GetDbStats {
+        version: ProtocolVersion,
+    },
+    GetStats {
+        version: ProtocolVersion,
     },
 }
 
@@ -157,6 +167,36 @@ impl DaemonRequest {
     #[must_use]
     pub fn cleanup_commands() -> Self {
         Self::CleanupCommands {
+            version: PROTOCOL_VERSION,
+            mode: CleanupMode::Internal,
+        }
+    }
+
+    #[must_use]
+    pub fn cleanup_with_mode(mode: CleanupMode) -> Self {
+        Self::CleanupCommands {
+            version: PROTOCOL_VERSION,
+            mode,
+        }
+    }
+
+    #[must_use]
+    pub fn optimize_db() -> Self {
+        Self::OptimizeDb {
+            version: PROTOCOL_VERSION,
+        }
+    }
+
+    #[must_use]
+    pub fn get_db_stats() -> Self {
+        Self::GetDbStats {
+            version: PROTOCOL_VERSION,
+        }
+    }
+
+    #[must_use]
+    pub fn get_stats() -> Self {
+        Self::GetStats {
             version: PROTOCOL_VERSION,
         }
     }
@@ -243,17 +283,65 @@ impl DaemonResponse {
             kind: DaemonResponseKind::CleanupResult { removed, remaining },
         }
     }
+
+    #[must_use]
+    pub fn optimize_result(stats: ggnmem_db::OptimizeStats) -> Self {
+        Self {
+            version: PROTOCOL_VERSION,
+            kind: DaemonResponseKind::OptimizeResult { stats },
+        }
+    }
+
+    #[must_use]
+    pub fn db_stats_result(stats: ggnmem_db::DbStats) -> Self {
+        Self {
+            version: PROTOCOL_VERSION,
+            kind: DaemonResponseKind::DbStatsResult { stats },
+        }
+    }
+
+    #[must_use]
+    pub fn stats_result(stats: ggnmem_db::UsageStats, uptime_ms: u64) -> Self {
+        Self {
+            version: PROTOCOL_VERSION,
+            kind: DaemonResponseKind::StatsResult { stats, uptime_ms },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DaemonResponseKind {
     Pong,
     Health(HealthStatus),
-    Accepted { queue_depth: usize },
+    Accepted {
+        queue_depth: usize,
+    },
     ShuttingDown,
-    Error { code: String, message: String },
-    RecentCommands { commands: Vec<CommandSummary> },
-    CommandCount { count: u64 },
-    SearchResults { results: Vec<SearchResultSummary> },
-    CleanupResult { removed: u64, remaining: u64 },
+    Error {
+        code: String,
+        message: String,
+    },
+    RecentCommands {
+        commands: Vec<CommandSummary>,
+    },
+    CommandCount {
+        count: u64,
+    },
+    SearchResults {
+        results: Vec<SearchResultSummary>,
+    },
+    CleanupResult {
+        removed: u64,
+        remaining: u64,
+    },
+    OptimizeResult {
+        stats: ggnmem_db::OptimizeStats,
+    },
+    DbStatsResult {
+        stats: ggnmem_db::DbStats,
+    },
+    StatsResult {
+        stats: ggnmem_db::UsageStats,
+        uptime_ms: u64,
+    },
 }

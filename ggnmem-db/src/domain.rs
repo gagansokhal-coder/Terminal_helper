@@ -284,3 +284,85 @@ pub struct SearchResult {
     /// Composite score in [0.0, 1.0] based on weighted ranking.
     pub score: f64,
 }
+
+// ─── Database diagnostics ────────────────────────────────────────────────────
+
+/// Low-level database statistics from SQLite PRAGMAs and row counts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DbStats {
+    pub command_count: u64,
+    pub session_count: u64,
+    pub metadata_count: u64,
+    pub queue_count: u64,
+    pub db_size_bytes: u64,
+    pub page_size: u64,
+    pub page_count: u64,
+    pub freelist_count: u64,
+    pub fts_row_count: u64,
+    pub duplicate_count_estimate: u64,
+    pub last_optimize_at_ms: i64,
+}
+
+impl DbStats {
+    /// Percentage of pages on the freelist (fragmentation estimate).
+    #[must_use]
+    pub fn fragmentation_pct(&self) -> f64 {
+        if self.page_count == 0 {
+            0.0
+        } else {
+            (self.freelist_count as f64 / self.page_count as f64) * 100.0
+        }
+    }
+
+    /// Estimated size of the FTS index (rough: fts_row_count * 200 bytes avg).
+    #[must_use]
+    pub fn fts_size_estimate(&self) -> u64 {
+        self.fts_row_count * 200
+    }
+}
+
+/// High-level usage statistics for the `ggnmem stats` command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageStats {
+    pub total_commands: u64,
+    /// Count of distinct `normalized_command` values.
+    pub unique_commands: u64,
+    pub total_sessions: u64,
+    pub searches_performed: u64,
+    /// Commands with run_count > 1 (deduplicated instead of creating new rows).
+    pub deduplicated_commands: u64,
+    /// Top commands by run_count: `(command_text, run_count)`.
+    pub most_used: Vec<(String, u64)>,
+    pub db_size_bytes: u64,
+    pub last_cleanup_at_ms: i64,
+    pub last_cleanup_removed: u64,
+    pub last_cleanup_remaining: u64,
+    pub last_optimize_at_ms: i64,
+}
+
+/// Result metadata for a database optimization pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OptimizeStats {
+    pub before_size_bytes: u64,
+    pub after_size_bytes: u64,
+    pub elapsed_ms: u64,
+    pub vacuum_ran: bool,
+}
+
+/// Mode for the cleanup command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CleanupMode {
+    /// Remove internal ggnmem / shell noise commands.
+    Internal,
+    /// Remove true duplicate rows (same content_hash, keep newest).
+    Duplicates,
+    /// Remove commands that failed once and were never re-run.
+    Failed,
+    /// Remove commands older than N days.
+    OlderThan(u32),
+    /// Enforce retention policy: max age + max count.
+    Retention {
+        max_age_days: u32,
+        max_commands: u64,
+    },
+}

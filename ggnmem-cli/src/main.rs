@@ -7,7 +7,6 @@ mod setup;
 mod tui;
 
 use anyhow::{bail, Context, Result};
-use std::path::PathBuf;
 use ggnmem_daemon::{
     protocol::{
         CommandPayload, DaemonRequest, DaemonResponse, DaemonResponseKind, SessionPayload,
@@ -15,6 +14,7 @@ use ggnmem_daemon::{
     },
     DaemonConfig, IpcClient,
 };
+use std::path::PathBuf;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -28,7 +28,10 @@ async fn main() -> Result<()> {
         Some("count") => count().await,
         Some("doctor") => doctor().await,
         Some("search") => search(&args).await,
-        Some("cleanup") => cleanup().await,
+        Some("cleanup") => cleanup(&args).await,
+        Some("optimize") => optimize().await,
+        Some("db") => db(&args).await,
+        Some("stats") => stats().await,
         Some("ui") => tui::run_tui().await,
         Some("version" | "--version" | "-V") => {
             version();
@@ -41,6 +44,7 @@ async fn main() -> Result<()> {
         Some("start") => service::cmd_start(),
         Some("stop") => service::cmd_stop(),
         Some("restart") => service::cmd_restart(),
+        Some("logs") => service::cmd_logs(&args),
         Some("autostart") => cmd_autostart(&args),
         Some("export") => export::cmd_export(&args).await,
         Some(command) => bail!("unknown command: {command}"),
@@ -52,7 +56,10 @@ async fn main() -> Result<()> {
 }
 
 fn print_usage() {
-    println!("ggnmem {} — semantic terminal memory engine", env!("CARGO_PKG_VERSION"));
+    println!(
+        "ggnmem {} — semantic terminal memory engine",
+        env!("CARGO_PKG_VERSION")
+    );
     println!();
     println!("usage: ggnmem <command>");
     println!();
@@ -62,7 +69,10 @@ fn print_usage() {
     println!("  recent           Show recent captured commands");
     println!("  search <query>   Search captured commands");
     println!("  count            Show total number of indexed commands");
-    println!("  cleanup          Remove internal ggnmem commands from database");
+    println!("  stats            Show detailed database usage statistics");
+    println!("  optimize         Run database optimization (defragment and analyze)");
+    println!("  db stats         Show low-level database statistics");
+    println!("  cleanup [flag]   Remove commands (--internal, --duplicates, --failed, --older-than DAYS)");
     println!("  export           Export command history (--format json|csv)");
     println!();
     println!("daemon:");
@@ -70,7 +80,8 @@ fn print_usage() {
     println!("  stop             Stop the running daemon");
     println!("  restart          Restart the daemon");
     println!("  status           Show daemon status");
-    println!("  autostart        Enable/disable daemon autostart");
+    println!("  logs             Show daemon logs (--lines N)");
+    println!("  autostart        Enable/disable/status daemon autostart");
     println!();
     println!("config:");
     println!("  config show      Show current configuration");
@@ -113,8 +124,9 @@ fn cmd_autostart(args: &[String]) -> Result<()> {
     match args.get(2).map(String::as_str) {
         Some("enable") => service::cmd_autostart_enable(),
         Some("disable") => service::cmd_autostart_disable(),
-        Some(sub) => bail!("unknown autostart subcommand: {sub}\n\nusage:\n  ggnmem autostart enable\n  ggnmem autostart disable"),
-        None => bail!("usage:\n  ggnmem autostart enable\n  ggnmem autostart disable"),
+        Some("status") => service::cmd_autostart_status(),
+        Some(sub) => bail!("unknown autostart subcommand: {sub}\n\nusage:\n  ggnmem autostart enable\n  ggnmem autostart disable\n  ggnmem autostart status"),
+        None => service::cmd_autostart_status(),
     }
 }
 
@@ -227,7 +239,7 @@ async fn ingest(args: &[String]) -> Result<()> {
 }
 
 /// Parse a `--name value` pair from the argument list.
-fn parse_named_arg(args: &[String], name: &str) -> Option<String> {
+pub fn parse_named_arg(args: &[String], name: &str) -> Option<String> {
     args.iter()
         .position(|a| a == name)
         .and_then(|i| args.get(i + 1))
@@ -345,25 +357,6 @@ async fn count() -> Result<()> {
     }
 }
 
-// ─── Cleanup ─────────────────────────────────────────────────────────────────
-
-async fn cleanup() -> Result<()> {
-    let response = request(DaemonRequest::cleanup_commands()).await?;
-    match response.kind {
-        DaemonResponseKind::CleanupResult { removed, remaining } => {
-            if removed == 0 {
-                println!("No internal commands found. Database is clean.");
-            } else {
-                println!("Removed {removed} internal commands.");
-            }
-            println!("Database optimized. {remaining} commands remaining.");
-            Ok(())
-        }
-        DaemonResponseKind::Error { code, message } => bail!("{code}: {message}"),
-        other => bail!("unexpected daemon response: {other:?}"),
-    }
-}
-
 // ─── Doctor ──────────────────────────────────────────────────────────────────
 
 async fn doctor() -> Result<()> {
@@ -406,21 +399,26 @@ async fn doctor() -> Result<()> {
         println!("✗ not found (run: ggnmem install)");
     }
 
-    // Config details (features + profile).
+    // Config details (features + profile + limits).
     match config::load() {
         Ok(cfg) => {
-            let profile_name = profile::detect_profile(&cfg)
-                .unwrap_or("custom");
+            let profile_name = profile::detect_profile(&cfg).unwrap_or("custom");
             println!("  profile       ... {profile_name}");
             println!(
                 "  features      ... capture={} search={} tui={} ai={}",
-                cfg.features.capture,
-                cfg.features.search,
-                cfg.features.tui,
-                cfg.features.ai
+                cfg.features.capture, cfg.features.search, cfg.features.tui, cfg.features.ai
             );
             println!("  max_history   ... {}", cfg.limits.max_history);
             println!("  index_mode    ... {}", cfg.search.index_mode);
+            println!("  log_level     ... {}", cfg.daemon.log_level);
+            println!("  max_memory_mb ... {} MB", cfg.limits.max_memory_mb);
+            println!("  max_db_size_mb ... {} MB", cfg.limits.max_db_size_mb);
+            println!(
+                "  retention     ... {} days, max {} commands, auto_cleanup={}",
+                cfg.retention.retention_days,
+                cfg.retention.max_commands,
+                cfg.retention.auto_cleanup
+            );
         }
         Err(_) => {
             println!("  config        ... (could not load)");
@@ -428,12 +426,13 @@ async fn doctor() -> Result<()> {
     }
 
     // Database.
-    let db_path = home.join(".local").join("share").join("ggnmem").join("ggnmem.db");
+    let data_home = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".local").join("share"));
+    let db_path = data_home.join("ggnmem").join("ggnmem.db");
     print!("database        ... ");
     if db_path.exists() {
-        let size = std::fs::metadata(&db_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let size = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
         let size_str = if size < 1024 {
             format!("{size} B")
         } else if size < 1024 * 1024 {
@@ -444,6 +443,28 @@ async fn doctor() -> Result<()> {
         println!("✓ {} ({})", db_path.display(), size_str);
     } else {
         println!("✗ not found (start daemon to create)");
+    }
+
+    // Log file.
+    let log_file = home
+        .join(".local")
+        .join("state")
+        .join("ggnmem")
+        .join("logs")
+        .join("daemon.log");
+    print!("log file        ... ");
+    if log_file.exists() {
+        let size = std::fs::metadata(&log_file).map(|m| m.len()).unwrap_or(0);
+        let size_str = if size < 1024 {
+            format!("{size} B")
+        } else if size < 1024 * 1024 {
+            format!("{:.1} KB", size as f64 / 1024.0)
+        } else {
+            format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+        };
+        println!("✓ {} ({})", log_file.display(), size_str);
+    } else {
+        println!("— no logs yet");
     }
 
     // Shell integration.
@@ -497,13 +518,23 @@ async fn doctor() -> Result<()> {
                 );
                 println!(
                     "  db connected  ... {}",
-                    if status.db_connected {
-                        "✓"
-                    } else {
-                        "✗"
-                    }
+                    if status.db_connected { "✓" } else { "✗" }
                 );
                 println!("  platform      ... {}", status.platform);
+
+                // RAM usage from /proc/<pid>/status.
+                if let Some(pid) = pid_val {
+                    let proc_status = format!("/proc/{pid}/status");
+                    if let Ok(contents) = std::fs::read_to_string(&proc_status) {
+                        for line in contents.lines() {
+                            if line.starts_with("VmRSS:") {
+                                let rss = line.trim_start_matches("VmRSS:").trim();
+                                println!("  memory (RSS)  ... {rss}");
+                                break;
+                            }
+                        }
+                    }
+                }
             }
             DaemonResponseKind::Error { code, message } => {
                 println!("✗ error: {code}: {message}");
@@ -545,6 +576,56 @@ async fn doctor() -> Result<()> {
             },
             Err(error) => println!("error: {error}"),
         }
+
+        print!("db stats        ... ");
+        match request(DaemonRequest::get_db_stats()).await {
+            Ok(response) => match response.kind {
+                DaemonResponseKind::DbStatsResult { stats } => {
+                    println!(
+                        "{}; {} free pages; {} duplicate runs",
+                        format_bytes(stats.db_size_bytes),
+                        stats.freelist_count,
+                        stats.duplicate_count_estimate
+                    );
+                }
+                DaemonResponseKind::Error { code, message } => {
+                    println!("error: {code}: {message}");
+                }
+                _ => println!("unexpected response"),
+            },
+            Err(error) => println!("error: {error}"),
+        }
+    }
+
+    // Autostart status.
+    print!("autostart       ... ");
+    let mut autostart_found = false;
+    // Check systemd.
+    let systemd_path = home
+        .join(".config")
+        .join("systemd")
+        .join("user")
+        .join("ggnmem-daemon.service");
+    if systemd_path.exists() {
+        print!("✓ systemd ");
+        autostart_found = true;
+    }
+    // Check shell rc.
+    for rc_name in &[".bashrc", ".zshrc"] {
+        let rc_path = home.join(rc_name);
+        if rc_path.exists() {
+            if let Ok(contents) = std::fs::read_to_string(&rc_path) {
+                if contents.contains("# ggnmem daemon autostart") {
+                    print!("✓ shell ");
+                    autostart_found = true;
+                }
+            }
+        }
+    }
+    if autostart_found {
+        println!();
+    } else {
+        println!("✗ not configured (ggnmem autostart enable)");
     }
 
     println!();
@@ -658,6 +739,198 @@ async fn search(args: &[String]) -> Result<()> {
         }
         DaemonResponseKind::Error { code, message } => bail!("{code}: {message}"),
         other => bail!("unexpected daemon response: {other:?}"),
+    }
+}
+
+// ─── Phase 11: Cleanup, Optimize, Stats ──────────────────────────────────────
+
+async fn cleanup(args: &[String]) -> Result<()> {
+    let mode_arg = args.get(2).map(String::as_str).unwrap_or("--internal");
+
+    let (mode_name, mode) = match mode_arg {
+        "--internal" | "internal" => ("internal", ggnmem_db::CleanupMode::Internal),
+        "--duplicates" | "duplicates" => ("duplicates", ggnmem_db::CleanupMode::Duplicates),
+        "--failed" | "failed" => ("failed", ggnmem_db::CleanupMode::Failed),
+        "--older-than" | "older-than" => {
+            let days = args
+                .get(3)
+                .context("usage: ggnmem cleanup --older-than <days>")?
+                .parse::<u32>()
+                .context("days must be a positive integer")?;
+            ("older-than", ggnmem_db::CleanupMode::OlderThan(days))
+        }
+        _ => bail!(
+            "unknown cleanup mode: {mode_arg}\nusage:\n  ggnmem cleanup --internal\n  ggnmem cleanup --duplicates\n  ggnmem cleanup --failed\n  ggnmem cleanup --older-than DAYS"
+        ),
+    };
+
+    println!("cleaning up database (mode: {mode_name})...");
+    let response = request(DaemonRequest::cleanup_with_mode(mode)).await?;
+    match response.kind {
+        DaemonResponseKind::CleanupResult { removed, remaining } => {
+            println!("removed {removed} rows. {remaining} commands remain.");
+            Ok(())
+        }
+        DaemonResponseKind::Error { code, message } => bail!("{code}: {message}"),
+        other => bail!("unexpected daemon response: {other:?}"),
+    }
+}
+
+async fn optimize() -> Result<()> {
+    println!("optimizing database (this may take a few seconds)...");
+    let response = request(DaemonRequest::optimize_db()).await?;
+    match response.kind {
+        DaemonResponseKind::OptimizeResult { stats } => {
+            println!("✓ database optimized in {}ms.", stats.elapsed_ms);
+            println!("  before: {}", format_bytes(stats.before_size_bytes));
+            println!("  after:  {}", format_bytes(stats.after_size_bytes));
+            println!(
+                "  vacuum: {}",
+                if stats.vacuum_ran { "ran" } else { "skipped" }
+            );
+            Ok(())
+        }
+        DaemonResponseKind::Error { code, message } => bail!("{code}: {message}"),
+        other => bail!("unexpected daemon response: {other:?}"),
+    }
+}
+
+async fn db(args: &[String]) -> Result<()> {
+    match args.get(2).map(String::as_str) {
+        Some("stats") => db_stats().await,
+        Some(sub) => bail!("unknown db subcommand: {sub}\n\nusage:\n  ggnmem db stats"),
+        None => bail!("usage: ggnmem db stats"),
+    }
+}
+
+async fn db_stats() -> Result<()> {
+    let response = request(DaemonRequest::get_db_stats()).await?;
+
+    let stats = match response.kind {
+        DaemonResponseKind::DbStatsResult { stats } => stats,
+        DaemonResponseKind::Error { code, message } => bail!("{code}: {message}"),
+        other => bail!("unexpected daemon response: {other:?}"),
+    };
+
+    println!("ggnmem db stats");
+    println!("─────────────────────────────────");
+    println!(
+        "  database size:      {}",
+        format_bytes(stats.db_size_bytes)
+    );
+    println!("  rows:");
+    println!("    commands:         {}", stats.command_count);
+    println!("    sessions:         {}", stats.session_count);
+    println!("    metadata:         {}", stats.metadata_count);
+    println!("    queue:            {}", stats.queue_count);
+    println!(
+        "  fts estimate:       {} ({} shadow rows)",
+        format_bytes(stats.fts_size_estimate()),
+        stats.fts_row_count
+    );
+    println!(
+        "  duplicate estimate: {} repeated runs",
+        stats.duplicate_count_estimate
+    );
+    println!(
+        "  pages:              {} total, {} free ({:.1}% fragmented)",
+        stats.page_count,
+        stats.freelist_count,
+        stats.fragmentation_pct()
+    );
+    println!(
+        "  last optimize:      {}",
+        format_optional_timestamp(stats.last_optimize_at_ms)
+    );
+
+    Ok(())
+}
+
+async fn stats() -> Result<()> {
+    let response = request(DaemonRequest::get_stats()).await?;
+    let db_stats = request(DaemonRequest::get_db_stats()).await?;
+    let config = config::load().ok();
+
+    let (usage, uptime) = match response.kind {
+        DaemonResponseKind::StatsResult { stats, uptime_ms } => (stats, uptime_ms),
+        DaemonResponseKind::Error { code, message } => bail!("{code}: {message}"),
+        other => bail!("unexpected daemon response: {other:?}"),
+    };
+
+    let db = match db_stats.kind {
+        DaemonResponseKind::DbStatsResult { stats } => stats,
+        DaemonResponseKind::Error { code, message } => bail!("{code}: {message}"),
+        other => bail!("unexpected daemon response: {other:?}"),
+    };
+
+    println!("ggnmem statistics");
+    println!("─────────────────────────────────");
+    println!("daemon uptime:      {}s", uptime / 1000);
+    println!();
+    println!("usage:");
+    println!("  total commands:   {}", usage.total_commands);
+    println!("  unique commands:  {}", usage.unique_commands);
+    println!("  searches:         {}", usage.searches_performed);
+    println!("  deduplicated:     {}", usage.deduplicated_commands);
+    println!("  total sessions:   {}", usage.total_sessions);
+    println!();
+    println!("database:");
+    println!(
+        "  size:             {:.2} MB",
+        db.db_size_bytes as f64 / 1_048_576.0
+    );
+    println!("  fragmentation:    {:.1}%", db.fragmentation_pct());
+    println!(
+        "  pages (free):     {} ({} free)",
+        db.page_count, db.freelist_count
+    );
+    println!("  fts shadow rows:  {}", db.fts_row_count);
+    println!("  duplicate runs:   {}", db.duplicate_count_estimate);
+    println!(
+        "  last optimize:    {}",
+        format_optional_timestamp(usage.last_optimize_at_ms)
+    );
+    println!();
+    println!("retention:");
+    if let Some(cfg) = config {
+        println!("  retention days:   {}", cfg.retention.retention_days);
+        println!("  max commands:     {}", cfg.retention.max_commands);
+        println!("  auto cleanup:     {}", cfg.retention.auto_cleanup);
+    } else {
+        println!("  settings:         unavailable");
+    }
+    println!(
+        "  last cleanup:     {}",
+        format_optional_timestamp(usage.last_cleanup_at_ms)
+    );
+    println!("  last removed:     {}", usage.last_cleanup_removed);
+    println!("  remaining then:   {}", usage.last_cleanup_remaining);
+    println!();
+    println!("most used commands:");
+    for (cmd, count) in usage.most_used.iter().take(5) {
+        println!("  {count:>4}x  {cmd}");
+    }
+
+    Ok(())
+}
+
+fn format_bytes(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else if bytes < 1024 * 1024 * 1024 {
+        format!("{:.2} MB", bytes as f64 / 1_048_576.0)
+    } else {
+        format!("{:.2} GB", bytes as f64 / 1_073_741_824.0)
+    }
+}
+
+fn format_optional_timestamp(millis: i64) -> String {
+    if millis <= 0 {
+        "never".to_owned()
+    } else {
+        format_timestamp(millis)
     }
 }
 

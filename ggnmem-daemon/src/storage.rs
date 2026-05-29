@@ -107,6 +107,7 @@ pub async fn search_commands(
         }
         opts = opts.with_recent_only(recent_only);
         let results = database.search_commands_v2(&opts)?;
+        database.record_search_performed()?;
         let summaries: Vec<crate::protocol::SearchResultSummary> = results
             .into_iter()
             .map(|r| crate::protocol::SearchResultSummary {
@@ -126,10 +127,54 @@ pub async fn search_commands(
     Ok(results)
 }
 
-pub async fn cleanup_commands(database_path: PathBuf) -> DaemonResult<ggnmem_db::CleanupStats> {
+pub async fn cleanup_commands(
+    database_path: PathBuf,
+    mode: ggnmem_db::CleanupMode,
+) -> DaemonResult<ggnmem_db::CleanupStats> {
     let stats = tokio::task::spawn_blocking(move || {
         let database = Database::open(&DatabaseConfig::new(database_path))?;
-        database.cleanup_internal_commands()
+        database.cleanup_by_mode(&mode)
+    })
+    .await??;
+    Ok(stats)
+}
+
+pub async fn optimize_database(database_path: PathBuf) -> DaemonResult<ggnmem_db::OptimizeStats> {
+    let stats = tokio::task::spawn_blocking(move || {
+        let database = Database::open(&DatabaseConfig::new(database_path))?;
+        database.optimize()
+    })
+    .await??;
+    Ok(stats)
+}
+
+pub async fn get_db_stats(database_path: PathBuf) -> DaemonResult<ggnmem_db::DbStats> {
+    let stats = tokio::task::spawn_blocking(move || {
+        let database = Database::open(&DatabaseConfig::new(database_path))?;
+        database.db_stats()
+    })
+    .await??;
+    Ok(stats)
+}
+
+pub async fn get_usage_stats(database_path: PathBuf) -> DaemonResult<ggnmem_db::UsageStats> {
+    let stats = tokio::task::spawn_blocking(move || {
+        let database = Database::open(&DatabaseConfig::new(database_path))?;
+        database.usage_stats()
+    })
+    .await??;
+    Ok(stats)
+}
+
+/// Run retention cleanup (used by the periodic scheduler and startup check).
+pub async fn run_retention_cleanup(
+    database_path: PathBuf,
+    max_age_days: u32,
+    max_commands: u64,
+) -> DaemonResult<ggnmem_db::CleanupStats> {
+    let stats = tokio::task::spawn_blocking(move || {
+        let database = Database::open(&DatabaseConfig::new(database_path))?;
+        database.run_automatic_cleanup(max_age_days, max_commands)
     })
     .await??;
     Ok(stats)

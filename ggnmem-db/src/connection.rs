@@ -25,6 +25,12 @@ pub fn configure_connection(connection: &Connection, config: &DatabaseConfig) ->
     connection.pragma_update(None, "journal_mode", JOURNAL_MODE)?;
     connection.pragma_update(None, "synchronous", SYNCHRONOUS_MODE)?;
     connection.pragma_update(None, "mmap_size", config.mmap_size_bytes)?;
+    // 8 MB page cache (negative value = KB).
+    connection.pragma_update(None, "cache_size", -8000)?;
+    // Keep temp tables in memory to avoid disk I/O.
+    connection.pragma_update(None, "temp_store", "MEMORY")?;
+    // Cap WAL file at 64 MB to prevent unbounded growth.
+    connection.pragma_update(None, "journal_size_limit", 67_108_864_i64)?;
     Ok(())
 }
 

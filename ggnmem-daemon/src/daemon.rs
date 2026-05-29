@@ -1,4 +1,12 @@
-use std::{future::Future, sync::Arc, time::Instant};
+use fs2::FileExt;
+use std::{
+    fs,
+    future::Future,
+    io,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use ggnmem_db::{time::unix_epoch_millis, DatabaseConfig};
 use tokio::{sync::watch, task::JoinSet};
@@ -6,12 +14,12 @@ use tracing::{error, info, warn};
 
 use crate::{
     config::DaemonConfig,
-    error::DaemonResult,
+    error::{DaemonError, DaemonResult},
     health::{HealthState, HealthStatus},
     ipc::{IpcConnection, IpcServer},
     protocol::{DaemonRequest, DaemonResponse},
     queue::{IngestionQueue, QueueCommand, QueueItem, QueueWorker},
-    storage,
+    retention, storage,
 };
 
 pub struct Daemon {
@@ -39,7 +47,36 @@ impl Daemon {
     {
         info!("starting ggnmem daemon");
         ensure_parent_dirs(&self.config)?;
+
+        // Acquire an exclusive advisory lock on the PID file.
+        // The returned File handle must stay alive for the daemon's lifetime;
+        // dropping it releases the lock automatically.
+        let pid_path = state_pid_path();
+        let _lock_guard: Option<fs::File> = match pid_path {
+            Some(ref path) => Some(acquire_pid_lock(path)?),
+            None => None,
+        };
+
         storage::initialize_database(&self.config.database_path).await?;
+
+        if self.config.cleanup_enabled {
+            match retention::startup_cleanup_if_overdue(
+                &self.config.database_path,
+                self.config.cleanup_interval_secs,
+                self.config.retention_days,
+                self.config.max_commands,
+            )
+            .await
+            {
+                Ok(Some(stats)) => info!(
+                    removed = stats.removed,
+                    remaining = stats.remaining,
+                    "startup cleanup completed"
+                ),
+                Ok(None) => info!("startup cleanup: not overdue, skipped"),
+                Err(e) => warn!(%e, "startup cleanup failed (non-fatal)"),
+            }
+        }
 
         let listener = IpcServer::bind(&self.config.endpoint).await?;
         let (queue, receiver) =
@@ -55,11 +92,35 @@ impl Daemon {
 
         let worker = QueueWorker::new(receiver, self.config.database_path.clone());
         let worker_handle = tokio::spawn(worker.run());
+
+        let cleanup_handle = if self.config.cleanup_enabled {
+            Some(retention::spawn_periodic_cleanup(
+                self.config.database_path.clone(),
+                Duration::from_secs(self.config.cleanup_interval_secs),
+                self.config.retention_days,
+                self.config.max_commands,
+                shutdown_rx.clone(),
+            ))
+        } else {
+            None
+        };
+
         let result = self
             .accept_loop(listener, state, shutdown_rx, shutdown)
             .await;
 
         worker_handle.abort();
+        if let Some(handle) = cleanup_handle {
+            handle.abort();
+        }
+
+        // Clean up PID file on graceful shutdown.
+        // The lock is released when _lock_guard is dropped at scope exit.
+        if let Some(ref path) = pid_path {
+            let _ = fs::remove_file(path);
+            info!("removed PID file");
+        }
+
         info!("ggnmem daemon stopped");
         result
     }
@@ -214,10 +275,29 @@ async fn handle_connection(
                 Err(error) => DaemonResponse::error("search_failed", error.to_string()),
             }
         }
-        DaemonRequest::CleanupCommands { .. } => {
-            match storage::cleanup_commands(state.database_path.clone()).await {
+        DaemonRequest::CleanupCommands { mode, .. } => {
+            match storage::cleanup_commands(state.database_path.clone(), mode).await {
                 Ok(stats) => DaemonResponse::cleanup_result(stats.removed, stats.remaining),
                 Err(error) => DaemonResponse::error("cleanup_failed", error.to_string()),
+            }
+        }
+        DaemonRequest::OptimizeDb { .. } => {
+            match storage::optimize_database(state.database_path.clone()).await {
+                Ok(stats) => DaemonResponse::optimize_result(stats),
+                Err(error) => DaemonResponse::error("optimize_failed", error.to_string()),
+            }
+        }
+        DaemonRequest::GetDbStats { .. } => {
+            match storage::get_db_stats(state.database_path.clone()).await {
+                Ok(stats) => DaemonResponse::db_stats_result(stats),
+                Err(error) => DaemonResponse::error("db_stats_failed", error.to_string()),
+            }
+        }
+        DaemonRequest::GetStats { .. } => {
+            let uptime_ms = state.started_at.elapsed().as_millis() as u64;
+            match storage::get_usage_stats(state.database_path.clone()).await {
+                Ok(stats) => DaemonResponse::stats_result(stats, uptime_ms),
+                Err(error) => DaemonResponse::error("stats_failed", error.to_string()),
             }
         }
     };
@@ -242,4 +322,66 @@ pub async fn run_loaded_config() -> DaemonResult<()> {
 
 pub fn database_config_for_path(path: std::path::PathBuf) -> DatabaseConfig {
     DatabaseConfig::new(path)
+}
+
+// ─── PID file + advisory lock ────────────────────────────────────────────────
+
+/// Get the path to `~/.local/state/ggnmem/daemon.pid`.
+fn state_pid_path() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from).map(|home| {
+        home.join(".local")
+            .join("state")
+            .join("ggnmem")
+            .join("daemon.pid")
+    })
+}
+
+/// Acquire an exclusive advisory lock on the PID file.
+///
+/// * If the lock succeeds, the current PID is written to the file and the
+///   open `File` handle is returned.  The caller **must** keep this handle
+///   alive for the entire daemon lifetime — dropping it releases the lock.
+/// * If another process already holds the lock (`WouldBlock`), this returns
+///   an error telling the user to stop the existing daemon first.
+fn acquire_pid_lock(pid_path: &Path) -> DaemonResult<fs::File> {
+    if let Some(parent) = pid_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(pid_path)?;
+
+    match file.try_lock_exclusive() {
+        Ok(()) => {
+            // Lock acquired — write our PID.
+            let pid = std::process::id();
+            // Truncate any previous content and write new PID.
+            file.set_len(0)?;
+            io::Write::write_all(&mut &file, pid.to_string().as_bytes())?;
+            info!(pid, path = %pid_path.display(), "acquired PID lock");
+            Ok(file)
+        }
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+            // Another daemon holds the lock.  Try to read its PID for
+            // a friendlier error message.
+            let existing_pid = fs::read_to_string(pid_path).unwrap_or_default();
+            let existing_pid = existing_pid.trim();
+            let msg = if existing_pid.is_empty() {
+                "another ggnmem daemon is already running. \
+                 Stop it with `ggnmem stop` before starting a new one."
+                    .to_owned()
+            } else {
+                format!(
+                    "another ggnmem daemon is already running (PID {existing_pid}). \
+                     Stop it with `ggnmem stop` before starting a new one."
+                )
+            };
+            Err(DaemonError::InvalidConfig(msg))
+        }
+        Err(e) => Err(DaemonError::Io(e)),
+    }
 }
