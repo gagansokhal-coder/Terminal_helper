@@ -30,6 +30,9 @@ pub struct GgnmemConfig {
 
     #[serde(default = "default_retention")]
     pub retention: RetentionConfig,
+
+    #[serde(default = "default_ai")]
+    pub ai: AiSection,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +95,21 @@ pub struct RetentionConfig {
     pub auto_cleanup: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiSection {
+    #[serde(default)]
+    pub ai_enabled: bool,
+
+    #[serde(default = "default_embedding_provider")]
+    pub embedding_provider: String,
+
+    #[serde(default)]
+    pub semantic_search: bool,
+
+    #[serde(default = "default_model_name")]
+    pub model_name: String,
+}
+
 // ─── Defaults ────────────────────────────────────────────────────────────────
 
 fn bool_true() -> bool {
@@ -120,6 +138,20 @@ fn default_retention_days() -> u32 {
 }
 fn default_max_commands() -> u64 {
     1_000_000
+}
+fn default_embedding_provider() -> String {
+    "local".to_owned()
+}
+fn default_model_name() -> String {
+    "all-MiniLM-L6-v2".to_owned()
+}
+fn default_ai() -> AiSection {
+    AiSection {
+        ai_enabled: false,
+        embedding_provider: default_embedding_provider(),
+        semantic_search: false,
+        model_name: default_model_name(),
+    }
 }
 fn default_features() -> FeaturesConfig {
     FeaturesConfig {
@@ -169,6 +201,7 @@ impl Default for GgnmemConfig {
             limits: default_limits(),
             search: default_search(),
             retention: default_retention(),
+            ai: default_ai(),
         }
     }
 }
@@ -251,6 +284,15 @@ pub fn cmd_show() -> Result<()> {
     println!("    retention_days = {}", config.retention.retention_days);
     println!("    max_commands   = {}", config.retention.max_commands);
     println!("    auto_cleanup   = {}", config.retention.auto_cleanup);
+    println!();
+    println!("  [ai]");
+    println!("    ai_enabled     = {}", config.ai.ai_enabled);
+    println!(
+        "    embedding_provider = \"{}\"",
+        config.ai.embedding_provider
+    );
+    println!("    semantic_search = {}", config.ai.semantic_search);
+    println!("    model_name     = \"{}\"", config.ai.model_name);
 
     Ok(())
 }
@@ -271,6 +313,16 @@ pub fn cmd_set(args: &[String]) -> Result<()> {
         "search" => config.features.search = parse_bool(value)?,
         "tui" => config.features.tui = parse_bool(value)?,
         "ai" => config.features.ai = parse_bool(value)?,
+        "ai_enabled" => config.ai.ai_enabled = parse_bool(value)?,
+        "semantic_search" => config.ai.semantic_search = parse_bool(value)?,
+        "embedding_provider" => {
+            let provider = value.as_str();
+            if !["local"].contains(&provider) {
+                bail!("embedding_provider must be: local");
+            }
+            config.ai.embedding_provider = value.clone();
+        }
+        "model_name" => config.ai.model_name = value.clone(),
         "autostart" | "daemon_autostart" => config.daemon.autostart = parse_bool(value)?,
         "theme" => config.appearance.theme = value.clone(),
         "max_history" => {
@@ -315,7 +367,7 @@ pub fn cmd_set(args: &[String]) -> Result<()> {
         "auto_cleanup" => config.retention.auto_cleanup = parse_bool(value)?,
         other => {
             bail!(
-                "unknown config key: {other}\n\navailable keys:\n  capture, search, tui, ai, autostart, log_level, theme, max_history, max_memory_mb, max_db_size_mb, index_mode, retention_days, max_commands, auto_cleanup"
+                "unknown config key: {other}\n\navailable keys:\n  capture, search, tui, ai, ai_enabled, semantic_search, embedding_provider, model_name, autostart, log_level, theme, max_history, max_memory_mb, max_db_size_mb, index_mode, retention_days, max_commands, auto_cleanup"
             );
         }
     }

@@ -314,12 +314,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ggnmem-ai"
+version = "0.3.0-alpha"
+dependencies = [
+ "ggnmem-db",
+ "rusqlite",
+ "serde",
+ "sha2",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "ggnmem-cli"
 version = "0.3.0-alpha"
 dependencies = [
  "anyhow",
  "crossterm",
  "fs2",
+ "ggnmem-ai",
  "ggnmem-daemon",
  "ggnmem-db",
  "ratatui",

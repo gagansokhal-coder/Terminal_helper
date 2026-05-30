@@ -129,22 +129,6 @@ Core Runtime Layers:
 * embedding generation
 * indexing
 
-3. PTY Proxy
-
-* VT100 interception
-* overlay rendering
-* shadow buffer restoration
-
-Core Search Pipeline:
-
-* FTS5 keyword search
-* trigram fuzzy matching
-* sqlite-vec semantic search
-* Reciprocal Rank Fusion (RRF)
-
-Primary Database:
-SQLite
-
 Primary Runtime:
 Tokio
 
@@ -160,8 +144,8 @@ candle
 
 ## Highest Priority
 
-* Validate the full workspace on a clean Linux/WSL toolchain after Phase 11.
-* Decide the next roadmap target after retention scheduling.
+* Validate the full workspace on a clean Linux/WSL toolchain after Phase 12A.
+* Decide the next roadmap target (e.g., full model loading for AI, or PTY overlays).
 * Keep native Windows validation blocked until MSVC Build Tools or a working 64-bit MinGW toolchain is installed.
 
 ## Secondary Priority
@@ -172,9 +156,8 @@ candle
 
 ## Deferred
 
-* semantic embeddings
+* semantic embeddings model loading (weights/inference)
 * PTY overlay
-* AI workflows
 * enterprise synchronization
 
 ---
@@ -1712,6 +1695,64 @@ Gemini 3.1 Pro (High)
 ### Warnings
 
 * Automatic git command execution failed due to environment execution sandbox errors.
+
+---
+
+### Session
+
+Date: 2026-05-30
+Agent: Antigravity
+Model: Gemini 3.1 Pro (High)
+
+### Completed
+
+* **Executed Phase 12A: Optional AI Foundation**.
+* Created `ggnmem-ai` crate with interfaces for model management, embedding pipelines, and vector storage.
+* Implemented runtime-loaded `sqlite-vec` support (via `vec0` extension probe) to keep AI optional and avoid vendoring into core.
+* Implemented graceful degradation for lite installations (fallback metadata table for vectors).
+* Added `TestEmbeddingProvider` generating deterministic SHA-256 pseudo-embeddings for testing without ML runtimes.
+* Added `[ai]` section to config (`ai_enabled`, `semantic_search`, `embedding_provider`, `model_name`).
+* Integrated CLI `ai` subcommands (`status`, `enable`, `disable`, `models`, `install`, `remove`).
+* Updated `install.sh` and profile generators to initialize AI fields correctly (disabled by default).
+* Validated full workspace under WSL: cargo check, cargo test, cargo clippy (resolved 3 warnings), and CLI integration tests passed successfully.
+
+### Modified Files
+
+* `Cargo.toml`
+* `ggnmem-cli/src/main.rs`
+* `ggnmem-cli/src/config.rs`
+* `ggnmem-cli/src/profile.rs`
+* `ggnmem-cli/src/setup.rs`
+* `install.sh`
+* `docs/agent_memory.md`
+
+### Created Files
+
+* `ggnmem-ai/Cargo.toml`
+* `ggnmem-ai/src/lib.rs`
+* `ggnmem-ai/src/error.rs`
+* `ggnmem-ai/src/config.rs`
+* `ggnmem-ai/src/models.rs`
+* `ggnmem-ai/src/vector.rs`
+* `ggnmem-ai/src/embedding.rs`
+
+### Problems Encountered
+
+* Windows sandbox blocked native MSVC compilation and `cargo` commands directly, requiring execution via `wsl bash`.
+* Clippy flagged redundant closures and default struct reassignments, which were corrected.
+
+### Current State
+
+* Phase 12A completed. The foundation for semantic search exists as an isolated module, disabled by default, supporting graceful degradation.
+
+### Next Recommended Steps
+
+* Review the Phase 12A implementation.
+* Decide if the next phase should implement actual ONNX/Candle model inference (Phase 12B) or focus on PTY rendering/UI workflows.
+
+### Warnings
+
+* Real semantic search relies on the `sqlite-vec` extension and a real embedding provider. The current `TestEmbeddingProvider` is non-semantic.
 
 ---
 

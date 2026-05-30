@@ -164,6 +164,12 @@ index_mode = "balanced"
 retention_days = 365
 max_commands = 1000000
 auto_cleanup = true
+
+[ai]
+ai_enabled = false
+embedding_provider = "local"
+semantic_search = false
+model_name = "all-MiniLM-L6-v2"
 EOF
     ok "config.toml created"
 fi

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "ggnmem-ai",
     "ggnmem-cli",
     "ggnmem-daemon",
     "ggnmem-db",

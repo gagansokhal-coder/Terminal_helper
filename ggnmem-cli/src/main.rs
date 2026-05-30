@@ -47,6 +47,7 @@ async fn main() -> Result<()> {
         Some("logs") => service::cmd_logs(&args),
         Some("autostart") => cmd_autostart(&args),
         Some("export") => export::cmd_export(&args).await,
+        Some("ai") => cmd_ai(&args),
         Some(command) => bail!("unknown command: {command}"),
         None => {
             print_usage();
@@ -89,6 +90,14 @@ fn print_usage() {
     println!("  profile list     Show available profiles");
     println!("  profile apply N  Apply a named profile");
     println!();
+    println!("ai:");
+    println!("  ai status        Show AI feature status");
+    println!("  ai enable        Enable AI features");
+    println!("  ai disable       Disable AI features");
+    println!("  ai models        List available/installed models");
+    println!("  ai install M     Install an embedding model");
+    println!("  ai remove M      Remove an installed model");
+    println!();
     println!("setup:");
     println!("  install          Set up shell integration and config");
     println!("  uninstall        Remove ggnmem (--full to include database)");
@@ -127,6 +136,18 @@ fn cmd_autostart(args: &[String]) -> Result<()> {
         Some("status") => service::cmd_autostart_status(),
         Some(sub) => bail!("unknown autostart subcommand: {sub}\n\nusage:\n  ggnmem autostart enable\n  ggnmem autostart disable\n  ggnmem autostart status"),
         None => service::cmd_autostart_status(),
+    }
+}
+
+fn cmd_ai(args: &[String]) -> Result<()> {
+    match args.get(2).map(String::as_str) {
+        Some("status") | None => ai_status(),
+        Some("enable") => ai_enable(),
+        Some("disable") => ai_disable(),
+        Some("models") => ai_models(),
+        Some("install") => ai_install(args),
+        Some("remove") => ai_remove(args),
+        Some(sub) => bail!("unknown ai subcommand: {sub}\n\nusage:\n  ggnmem ai status\n  ggnmem ai enable\n  ggnmem ai disable\n  ggnmem ai models\n  ggnmem ai install <model>\n  ggnmem ai remove <model>"),
     }
 }
 
@@ -625,11 +646,54 @@ async fn doctor() -> Result<()> {
     if autostart_found {
         println!();
     } else {
-        println!("✗ not configured (ggnmem autostart enable)");
+        println!("\u{2717} not configured (ggnmem autostart enable)");
+    }
+
+    // ── AI status (offline) ──
+
+    println!();
+    print!("ai              ... ");
+    match config::load() {
+        Ok(cfg) => {
+            if cfg.ai.ai_enabled {
+                println!("\u{2713} enabled");
+            } else {
+                println!("\u{2717} disabled");
+            }
+            println!("  semantic_search ... {}", cfg.ai.semantic_search);
+            println!("  provider      ... {}", cfg.ai.embedding_provider);
+            println!("  model         ... {}", cfg.ai.model_name);
+
+            let ai_cfg = build_ai_config(&cfg);
+            let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir.clone());
+            let model_installed = mgr.is_installed(&cfg.ai.model_name);
+            print!("  model installed ... ");
+            if model_installed {
+                let size_str = mgr
+                    .model_size(&cfg.ai.model_name)
+                    .map(format_bytes)
+                    .unwrap_or_else(|| "unknown".to_owned());
+                println!("\u{2713} ({})", size_str);
+            } else {
+                println!("\u{2717}");
+            }
+
+            let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path.clone());
+            print!("  vector db     ... ");
+            if store.is_initialized() {
+                let count = store.count().unwrap_or(0);
+                println!("\u{2713} initialized ({count} vectors)");
+            } else {
+                println!("\u{2014} not initialized");
+            }
+        }
+        Err(_) => {
+            println!("? (config not loaded)");
+        }
     }
 
     println!();
-    println!("─────────────────────────────────");
+    println!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
     println!("all checks complete");
     Ok(())
 }
@@ -931,6 +995,190 @@ fn format_optional_timestamp(millis: i64) -> String {
         "never".to_owned()
     } else {
         format_timestamp(millis)
+    }
+}
+
+// ─── AI commands ─────────────────────────────────────────────────────────────
+
+/// Build an `AiConfig` from the CLI config.
+fn build_ai_config(cfg: &config::GgnmemConfig) -> ggnmem_ai::AiConfig {
+    ggnmem_ai::AiConfig {
+        enabled: cfg.ai.ai_enabled,
+        embedding_provider: cfg.ai.embedding_provider.clone(),
+        semantic_search: cfg.ai.semantic_search,
+        model_name: cfg.ai.model_name.clone(),
+        ..ggnmem_ai::AiConfig::default()
+    }
+}
+
+fn ai_status() -> Result<()> {
+    let cfg = config::load()?;
+    let ai_cfg = build_ai_config(&cfg);
+    let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir.clone());
+    let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path.clone());
+
+    println!("ggnmem ai status");
+    println!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
+    println!(
+        "  ai_enabled       ... {}",
+        if ai_cfg.enabled {
+            "\u{2713} true"
+        } else {
+            "\u{2717} false"
+        }
+    );
+    println!(
+        "  semantic_search  ... {}",
+        if ai_cfg.semantic_search {
+            "\u{2713} true"
+        } else {
+            "\u{2717} false"
+        }
+    );
+    println!("  provider         ... {}", ai_cfg.embedding_provider);
+    println!("  model            ... {}", ai_cfg.model_name);
+
+    let model_installed = mgr.is_installed(&ai_cfg.model_name);
+    print!("  model installed  ... ");
+    if model_installed {
+        let size_str = mgr
+            .model_size(&ai_cfg.model_name)
+            .map(format_bytes)
+            .unwrap_or_else(|| "\u{2014}".to_owned());
+        println!("\u{2713} ({})", size_str);
+    } else {
+        println!("\u{2717}");
+    }
+
+    print!("  model size       ... ");
+    match mgr.get_model(&ai_cfg.model_name) {
+        Ok(info) => println!("~{}", format_bytes(info.size_bytes)),
+        Err(_) => println!("\u{2014}"),
+    }
+
+    print!("  vector db        ... ");
+    if store.is_initialized() {
+        let count = store.count().unwrap_or(0);
+        println!("\u{2713} initialized ({count} vectors)");
+    } else {
+        println!("\u{2717} not initialized");
+    }
+
+    print!("  vector count     ... ");
+    println!("{}", store.count().unwrap_or(0));
+
+    Ok(())
+}
+
+fn ai_enable() -> Result<()> {
+    let mut cfg = config::load()?;
+    cfg.ai.ai_enabled = true;
+    cfg.ai.semantic_search = true;
+    cfg.features.ai = true;
+    config::save(&cfg)?;
+    println!("  \u{2713} AI features enabled");
+    println!("  ai_enabled = true");
+    println!("  semantic_search = true");
+    println!("  saved to {}", config::config_path()?.display());
+    Ok(())
+}
+
+fn ai_disable() -> Result<()> {
+    let mut cfg = config::load()?;
+    cfg.ai.ai_enabled = false;
+    cfg.ai.semantic_search = false;
+    cfg.features.ai = false;
+    config::save(&cfg)?;
+    println!("  \u{2713} AI features disabled");
+    println!("  ai_enabled = false");
+    println!("  semantic_search = false");
+    println!("  saved to {}", config::config_path()?.display());
+    Ok(())
+}
+
+fn ai_models() -> Result<()> {
+    let cfg = config::load()?;
+    let ai_cfg = build_ai_config(&cfg);
+    let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir.clone());
+    let models = mgr.list_available();
+
+    println!("ggnmem ai models");
+    println!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
+    println!();
+
+    for model in &models {
+        let status = if model.installed {
+            "\u{2713} installed"
+        } else {
+            "  available"
+        };
+        let active = if model.name == ai_cfg.model_name {
+            " (active)"
+        } else {
+            ""
+        };
+        println!("  {} {}{}", status, model.name, active);
+        println!("    {}", model.description);
+        println!(
+            "    dimensions: {}  size: ~{}",
+            model.dimensions,
+            format_bytes(model.size_bytes)
+        );
+        if model.installed {
+            if let Some(ref path) = model.install_path {
+                println!("    path: {}", path.display());
+            }
+            if model.disk_size_bytes > 0 {
+                println!("    disk: {}", format_bytes(model.disk_size_bytes));
+            }
+        }
+        println!();
+    }
+
+    println!("  models dir: {}", ai_cfg.models_dir.display());
+    Ok(())
+}
+
+fn ai_install(args: &[String]) -> Result<()> {
+    let model_name = args
+        .get(3)
+        .map(String::as_str)
+        .unwrap_or("all-MiniLM-L6-v2");
+
+    let cfg = config::load()?;
+    let ai_cfg = build_ai_config(&cfg);
+    let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir);
+
+    match mgr.install(model_name) {
+        Ok(info) => {
+            println!("  \u{2713} model '{}' installed (placeholder)", info.name);
+            if let Some(ref path) = info.install_path {
+                println!("  path: {}", path.display());
+            }
+            println!();
+            println!("  note: this phase creates the directory structure only.");
+            println!("  model weights will be downloaded in a future release.");
+            Ok(())
+        }
+        Err(e) => bail!("{e}"),
+    }
+}
+
+fn ai_remove(args: &[String]) -> Result<()> {
+    let model_name = args
+        .get(3)
+        .context("usage: ggnmem ai remove <model>")?;
+
+    let cfg = config::load()?;
+    let ai_cfg = build_ai_config(&cfg);
+    let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir);
+
+    match mgr.remove(model_name) {
+        Ok(()) => {
+            println!("  \u{2713} model '{model_name}' removed");
+            Ok(())
+        }
+        Err(e) => bail!("{e}"),
     }
 }
 

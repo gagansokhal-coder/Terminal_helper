@@ -46,6 +46,8 @@ fn apply_lite(cfg: &mut GgnmemConfig) {
     cfg.retention.max_commands = 10_000;
     cfg.retention.auto_cleanup = true;
     cfg.search.index_mode = "lite".to_owned();
+    cfg.ai.ai_enabled = false;
+    cfg.ai.semantic_search = false;
 }
 
 fn apply_balanced(cfg: &mut GgnmemConfig) {
@@ -57,6 +59,8 @@ fn apply_balanced(cfg: &mut GgnmemConfig) {
     cfg.retention.max_commands = 1_000_000;
     cfg.retention.auto_cleanup = true;
     cfg.search.index_mode = "balanced".to_owned();
+    cfg.ai.ai_enabled = false;
+    cfg.ai.semantic_search = false;
 }
 
 fn apply_power(cfg: &mut GgnmemConfig) {
@@ -68,6 +72,8 @@ fn apply_power(cfg: &mut GgnmemConfig) {
     cfg.retention.max_commands = 1_000_000;
     cfg.retention.auto_cleanup = true;
     cfg.search.index_mode = "power".to_owned();
+    cfg.ai.ai_enabled = false;
+    cfg.ai.semantic_search = false;
 }
 
 // ─── CLI commands ────────────────────────────────────────────────────────────

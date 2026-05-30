@@ -12,6 +12,7 @@ authors.workspace = true
 anyhow.workspace = true
 crossterm.workspace = true
 fs2.workspace = true
+ggnmem-ai = { path = "../ggnmem-ai" }
 ggnmem-daemon = { path = "../ggnmem-daemon" }
 ggnmem-db = { path = "../ggnmem-db" }
 ratatui.workspace = true
