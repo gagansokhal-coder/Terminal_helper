@@ -98,6 +98,7 @@ fn print_usage() {
     println!("  ai models        List available/installed models");
     println!("  ai install M     Install an embedding model");
     println!("  ai remove M      Remove an installed model");
+    println!("  ai reindex       Rebuild all embeddings");
     println!();
     println!("setup:");
     println!("  install          Set up shell integration and config");
@@ -1081,6 +1082,10 @@ fn ai_status() -> Result<()> {
     }
 
     print!("  vector db        ... ");
+    // Auto-initialize when preconditions are met.
+    if ai_cfg.enabled && model_installed && !store.is_initialized() {
+        let _ = store.ensure_initialized();
+    }
     if store.is_initialized() {
         let count = store.count().unwrap_or(0);
         println!("\u{2713} initialized ({count} vectors)");
@@ -1126,6 +1131,18 @@ fn ai_enable() -> Result<()> {
     println!("  ai_enabled = true");
     println!("  semantic_search = true");
     println!("  saved to {}", config::config_path()?.display());
+
+    // Auto-initialize vector DB if model is installed.
+    let ai_cfg = build_ai_config(&cfg);
+    let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir);
+    if mgr.is_installed(&cfg.ai.model_name) {
+        let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path);
+        if let Err(e) = store.ensure_initialized() {
+            eprintln!("  warning: could not initialize vector db: {e}");
+        } else {
+            println!("  \u{2713} vector db initialized");
+        }
+    }
     Ok(())
 }
 
@@ -1197,13 +1214,20 @@ fn ai_install(args: &[String]) -> Result<()> {
 
     match mgr.install(model_name) {
         Ok(info) => {
-            println!("  \u{2713} model '{}' installed (placeholder)", info.name);
+            println!("  \u{2713} model '{}' installed", info.name);
             if let Some(ref path) = info.install_path {
                 println!("  path: {}", path.display());
             }
-            println!();
-            println!("  note: this phase creates the directory structure only.");
-            println!("  model weights will be downloaded in a future release.");
+
+            // Auto-initialize vector DB if AI is enabled.
+            if cfg.ai.ai_enabled {
+                let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path);
+                if let Err(e) = store.ensure_initialized() {
+                    eprintln!("  warning: could not initialize vector db: {e}");
+                } else {
+                    println!("  \u{2713} vector db initialized");
+                }
+            }
             Ok(())
         }
         Err(e) => bail!("{e}"),
