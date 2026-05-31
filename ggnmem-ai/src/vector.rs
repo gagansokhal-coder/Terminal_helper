@@ -155,20 +155,26 @@ impl VectorStore {
         Ok(())
     }
 
-    /// Search for similar vectors using the vec0 extension.
+    /// Search for similar vectors.
     ///
-    /// Falls back to an empty result set if sqlite-vec is not available.
-    /// True semantic search requires the sqlite-vec extension.
+    /// Uses the vec0 extension (sqlite-vec) when available for hardware-
+    /// accelerated nearest-neighbour lookup.  When sqlite-vec is absent,
+    /// falls back to a brute-force cosine-distance scan over the
+    /// `vector_meta` table.  The brute-force path is O(n) but acceptable
+    /// for datasets under 100 K commands.
     pub fn search(&self, query: &[f32], limit: usize) -> AiResult<Vec<VectorMatch>> {
         self.ensure_initialized()?;
         validate_dimensions(query)?;
 
-        if !self.has_sqlite_vec.load(Ordering::Relaxed) {
-            // Without sqlite-vec, we can't do vector similarity search.
-            // Return empty — a future migration path will enable this.
-            return Ok(Vec::new());
+        if self.has_sqlite_vec.load(Ordering::Relaxed) {
+            self.search_vec0(query, limit)
+        } else {
+            self.search_brute_force(query, limit)
         }
+    }
 
+    /// Fast path: sqlite-vec `MATCH` query on the vec0 virtual table.
+    fn search_vec0(&self, query: &[f32], limit: usize) -> AiResult<Vec<VectorMatch>> {
         let conn = Connection::open(&self.path)?;
         let query_blob = floats_to_bytes(query);
 
@@ -193,6 +199,38 @@ impl VectorStore {
         Ok(matches)
     }
 
+    /// Slow path: load every embedding from `vector_meta` and compute
+    /// cosine distance in Rust.  Returns the `limit` closest matches.
+    fn search_brute_force(&self, query: &[f32], limit: usize) -> AiResult<Vec<VectorMatch>> {
+        let conn = Connection::open(&self.path)?;
+
+        let mut stmt = conn.prepare("SELECT command_id, embedding_bytes FROM vector_meta")?;
+
+        let mut matches: Vec<VectorMatch> = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let bytes: Vec<u8> = row.get(1)?;
+                Ok((id, bytes))
+            })?
+            .filter_map(|r| r.ok())
+            .map(|(id, bytes)| {
+                let embedding = bytes_to_floats(&bytes);
+                let distance = cosine_distance(query, &embedding);
+                VectorMatch { id, distance }
+            })
+            .collect();
+
+        // Sort ascending: lower distance = more similar.
+        matches.sort_by(|a, b| {
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        matches.truncate(limit);
+
+        Ok(matches)
+    }
+
     /// Count the number of indexed vectors.
     pub fn count(&self) -> AiResult<u64> {
         if !self.is_initialized() {
@@ -200,11 +238,8 @@ impl VectorStore {
         }
 
         let conn = Connection::open(&self.path)?;
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM vector_meta",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM vector_meta", [], |row| row.get(0))?;
 
         Ok(count as u64)
     }
@@ -231,6 +266,43 @@ impl VectorStore {
         )?;
 
         Ok(())
+    }
+
+    /// Delete ALL vectors from the store (for reindexing).
+    pub fn delete_all(&self) -> AiResult<u64> {
+        if !self.is_initialized() {
+            return Ok(0);
+        }
+
+        let conn = Connection::open(&self.path)?;
+        let count = self.count()?;
+
+        if self.has_sqlite_vec.load(Ordering::Relaxed) {
+            let _ = conn.execute_batch("DELETE FROM command_vectors;");
+        }
+
+        conn.execute_batch("DELETE FROM vector_meta;")?;
+
+        Ok(count)
+    }
+
+    /// List all command IDs that have been indexed.
+    ///
+    /// Used by the incremental indexer to determine which commands
+    /// still need embedding.
+    pub fn list_indexed_ids(&self) -> AiResult<std::collections::HashSet<String>> {
+        if !self.is_initialized() {
+            return Ok(std::collections::HashSet::new());
+        }
+
+        let conn = Connection::open(&self.path)?;
+        let mut stmt = conn.prepare("SELECT command_id FROM vector_meta")?;
+        let ids: std::collections::HashSet<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(ids)
     }
 }
 
@@ -279,6 +351,28 @@ fn floats_to_bytes(floats: &[f32]) -> Vec<u8> {
     floats.iter().flat_map(|f| f.to_le_bytes()).collect()
 }
 
+/// Convert raw bytes back to f32 slice (little-endian).
+fn bytes_to_floats(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect()
+}
+
+/// Compute cosine distance between two vectors.
+///
+/// Returns a value in `[0.0, 2.0]`:
+///   - `0.0` = identical direction
+///   - `1.0` = orthogonal
+///   - `2.0` = opposite direction
+///
+/// For unit-normalized vectors (our case), the dot product equals the
+/// cosine similarity, so `distance = 1 - dot(a, b)`.
+fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    1.0 - dot
+}
+
 /// Validate that an embedding has the expected dimensions.
 fn validate_dimensions(embedding: &[f32]) -> AiResult<()> {
     if embedding.len() != EMBEDDING_DIMENSIONS {
@@ -297,7 +391,11 @@ mod tests {
     use tempfile::TempDir;
 
     fn test_embedding() -> Vec<f32> {
-        vec![0.0_f32; EMBEDDING_DIMENSIONS]
+        // Unit vector along dimension 0 — avoids zero-vector issues
+        // with cosine distance (dot(0,0) = 0 → distance = 1.0).
+        let mut v = vec![0.0_f32; EMBEDDING_DIMENSIONS];
+        v[0] = 1.0;
+        v
     }
 
     #[test]
@@ -380,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn search_without_vec_returns_empty() {
+    fn search_brute_force_returns_results() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("vectors.db");
         let store = VectorStore::new(path);
@@ -388,9 +486,40 @@ mod tests {
         store.ensure_initialized().unwrap();
         store.insert("cmd-1", &test_embedding()).unwrap();
 
-        // Without sqlite-vec loaded, search returns empty.
+        // Brute-force fallback finds the single stored embedding.
         let results = store.search(&test_embedding(), 10).unwrap();
-        assert!(results.is_empty());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "cmd-1");
+        // Identical vectors → distance ≈ 0.
+        assert!(results[0].distance < 0.01);
+    }
+
+    #[test]
+    fn search_brute_force_ranking() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("vectors.db");
+        let store = VectorStore::new(path);
+
+        store.ensure_initialized().unwrap();
+
+        // Create two different embeddings.
+        let mut e1 = test_embedding();
+        e1[0] = 1.0;
+        // Normalize.
+        let mag: f32 = e1.iter().map(|x| x * x).sum::<f32>().sqrt();
+        for v in &mut e1 {
+            *v /= mag;
+        }
+
+        let e2 = test_embedding(); // all zeros → distance will be large
+
+        store.insert("cmd-close", &e1).unwrap();
+        store.insert("cmd-far", &e2).unwrap();
+
+        let results = store.search(&e1, 10).unwrap();
+        assert_eq!(results.len(), 2);
+        // The closest match should be cmd-close (identical vector).
+        assert_eq!(results[0].id, "cmd-close");
     }
 
     #[test]
@@ -424,11 +553,52 @@ mod tests {
         let bytes = floats_to_bytes(&values);
         assert_eq!(bytes.len(), values.len() * 4);
 
-        // Verify round-trip.
-        let recovered: Vec<f32> = bytes
-            .chunks_exact(4)
-            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-            .collect();
+        let recovered = bytes_to_floats(&bytes);
         assert_eq!(values, recovered);
+    }
+
+    #[test]
+    fn delete_all_clears_store() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("vectors.db");
+        let store = VectorStore::new(path);
+
+        store.ensure_initialized().unwrap();
+        store.insert("cmd-1", &test_embedding()).unwrap();
+        store.insert("cmd-2", &test_embedding()).unwrap();
+        assert_eq!(store.count().unwrap(), 2);
+
+        let removed = store.delete_all().unwrap();
+        assert_eq!(removed, 2);
+        assert_eq!(store.count().unwrap(), 0);
+    }
+
+    #[test]
+    fn list_indexed_ids_returns_stored_ids() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("vectors.db");
+        let store = VectorStore::new(path);
+
+        store.ensure_initialized().unwrap();
+        store.insert("cmd-1", &test_embedding()).unwrap();
+        store.insert("cmd-2", &test_embedding()).unwrap();
+
+        let ids = store.list_indexed_ids().unwrap();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains("cmd-1"));
+        assert!(ids.contains("cmd-2"));
+    }
+
+    #[test]
+    fn cosine_distance_identical_is_zero() {
+        let a = vec![1.0_f32, 0.0, 0.0];
+        assert!((cosine_distance(&a, &a)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cosine_distance_orthogonal_is_one() {
+        let a = vec![1.0_f32, 0.0, 0.0];
+        let b = vec![0.0_f32, 1.0, 0.0];
+        assert!((cosine_distance(&a, &b) - 1.0).abs() < 1e-6);
     }
 }

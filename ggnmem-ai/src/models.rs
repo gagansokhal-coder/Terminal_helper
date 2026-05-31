@@ -93,11 +93,7 @@ impl ModelManager {
                     size_bytes: entry.size_bytes,
                     dimensions: entry.dimensions,
                     installed,
-                    install_path: if installed {
-                        Some(model_dir)
-                    } else {
-                        None
-                    },
+                    install_path: if installed { Some(model_dir) } else { None },
                     disk_size_bytes: disk_size,
                 }
             })

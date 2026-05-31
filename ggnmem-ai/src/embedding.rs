@@ -193,6 +193,42 @@ impl EmbeddingPipeline {
     pub fn dimensions(&self) -> usize {
         self.provider.dimensions()
     }
+
+    /// Index a batch of commands, calling `progress` after each one.
+    ///
+    /// `commands` is a slice of `(command_id, command_text)` pairs.
+    /// The callback receives `(completed_count, total_count)`.
+    pub fn batch_index(
+        &self,
+        commands: &[(String, String)],
+        mut progress: impl FnMut(u64, u64),
+    ) -> AiResult<u64> {
+        let total = commands.len() as u64;
+        let mut indexed = 0u64;
+
+        for (id, text) in commands {
+            self.index_embedding(id, text)?;
+            indexed += 1;
+            progress(indexed, total);
+        }
+
+        Ok(indexed)
+    }
+
+    /// Delete all embeddings from the vector store (for reindexing).
+    pub fn delete_all_embeddings(&self) -> AiResult<u64> {
+        self.store.delete_all()
+    }
+
+    /// Get the set of already-indexed command IDs.
+    pub fn indexed_ids(&self) -> AiResult<std::collections::HashSet<String>> {
+        self.store.list_indexed_ids()
+    }
+
+    /// Access the underlying embedding provider.
+    pub fn provider(&self) -> &dyn EmbeddingProvider {
+        self.provider.as_ref()
+    }
 }
 
 // ─── Standalone interface functions ──────────────────────────────────────────
@@ -281,25 +317,77 @@ mod tests {
         let provider = Box::new(TestEmbeddingProvider::new());
         let pipeline = EmbeddingPipeline::new(provider, store);
 
-        pipeline.index_embedding("cmd-1", "docker compose up").unwrap();
-        pipeline.index_embedding("cmd-2", "git push origin main").unwrap();
-        pipeline.index_embedding("cmd-3", "cargo test --workspace").unwrap();
+        pipeline
+            .index_embedding("cmd-1", "docker compose up")
+            .unwrap();
+        pipeline
+            .index_embedding("cmd-2", "git push origin main")
+            .unwrap();
+        pipeline
+            .index_embedding("cmd-3", "cargo test --workspace")
+            .unwrap();
 
         assert_eq!(pipeline.vector_count().unwrap(), 3);
     }
 
     #[test]
-    fn test_pipeline_search_without_vec_returns_empty() {
+    fn test_pipeline_search_returns_results() {
         let tmp = TempDir::new().unwrap();
         let store = VectorStore::new(tmp.path().join("vectors.db"));
         let provider = Box::new(TestEmbeddingProvider::new());
         let pipeline = EmbeddingPipeline::new(provider, store);
 
-        pipeline.index_embedding("cmd-1", "docker compose up").unwrap();
+        pipeline
+            .index_embedding("cmd-1", "docker compose up")
+            .unwrap();
 
-        // Without sqlite-vec, search returns empty (graceful degradation).
-        let results = pipeline.search_embedding("docker", 10).unwrap();
-        assert!(results.is_empty());
+        // Brute-force fallback now returns results.
+        let results = pipeline.search_embedding("docker compose up", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "cmd-1");
+    }
+
+    #[test]
+    fn test_pipeline_batch_index() {
+        let tmp = TempDir::new().unwrap();
+        let store = VectorStore::new(tmp.path().join("vectors.db"));
+        let provider = Box::new(TestEmbeddingProvider::new());
+        let pipeline = EmbeddingPipeline::new(provider, store);
+
+        let commands = vec![
+            ("cmd-1".to_owned(), "docker compose up".to_owned()),
+            ("cmd-2".to_owned(), "git push origin main".to_owned()),
+            ("cmd-3".to_owned(), "cargo test --workspace".to_owned()),
+        ];
+
+        let mut last_progress = (0u64, 0u64);
+        let count = pipeline
+            .batch_index(&commands, |done, total| {
+                last_progress = (done, total);
+            })
+            .unwrap();
+
+        assert_eq!(count, 3);
+        assert_eq!(last_progress, (3, 3));
+        assert_eq!(pipeline.vector_count().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_pipeline_delete_all() {
+        let tmp = TempDir::new().unwrap();
+        let store = VectorStore::new(tmp.path().join("vectors.db"));
+        let provider = Box::new(TestEmbeddingProvider::new());
+        let pipeline = EmbeddingPipeline::new(provider, store);
+
+        pipeline
+            .index_embedding("cmd-1", "docker compose up")
+            .unwrap();
+        pipeline.index_embedding("cmd-2", "git push").unwrap();
+        assert_eq!(pipeline.vector_count().unwrap(), 2);
+
+        let removed = pipeline.delete_all_embeddings().unwrap();
+        assert_eq!(removed, 2);
+        assert_eq!(pipeline.vector_count().unwrap(), 0);
     }
 
     #[test]
@@ -342,11 +430,13 @@ mod tests {
     fn test_standalone_search_embedding() {
         let tmp = TempDir::new().unwrap();
         let store = VectorStore::new(tmp.path().join("vectors.db"));
-        let embedding = vec![0.0_f32; EMBEDDING_DIMENSIONS];
+        let mut embedding = vec![0.0_f32; EMBEDDING_DIMENSIONS];
+        embedding[0] = 1.0; // non-zero unit vector
         index_embedding(&store, "cmd-1", &embedding).unwrap();
         let results = search_embedding(&store, &embedding, 10).unwrap();
-        // Without sqlite-vec, returns empty.
-        assert!(results.is_empty());
+        // Brute-force fallback returns results.
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "cmd-1");
     }
 
     #[test]
