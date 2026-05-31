@@ -9,8 +9,6 @@
 //! The `TestEmbeddingProvider` generates deterministic pseudo-embeddings
 //! based on string hashing for test/development use.
 
-use sha2::{Digest, Sha256};
-
 use crate::error::{AiError, AiResult};
 use crate::vector::{VectorMatch, VectorStore, EMBEDDING_DIMENSIONS};
 
@@ -43,56 +41,57 @@ pub trait EmbeddingProvider: Send + Sync {
     fn model_name(&self) -> &str;
 }
 
-// ─── Test Embedding Provider ─────────────────────────────────────────────────
+// ─── N-gram Embedding Provider ───────────────────────────────────────────────
 
-/// A deterministic test implementation of `EmbeddingProvider`.
+/// A lightweight embedding provider that uses character n-grams and
+/// word-level features to produce semantically useful similarity.
 ///
-/// Generates pseudo-embeddings by hashing the input text with SHA-256
-/// and distributing the hash bytes across the embedding dimensions.
-/// This produces consistent, reproducible embeddings for testing
-/// without any ML dependencies.
+/// This is NOT a neural model — it uses deterministic feature hashing
+/// to project text into a fixed-size vector space. It handles:
+/// - Typo tolerance ("dockr" ≈ "docker" via shared trigrams)
+/// - Word overlap ("check git changes" ≈ "git status" via shared "git")
+/// - Substring similarity ("git log" ≈ "git status" via "git" prefix)
 ///
-/// The embeddings are NOT semantically meaningful — "docker" and
-/// "container" will NOT be close in vector space. This is purely
-/// for testing the pipeline plumbing.
-pub struct TestEmbeddingProvider {
+/// For production semantic search (understanding synonyms, paraphrasing),
+/// a real neural model (ONNX/Candle) is needed in a future phase.
+pub struct NgramEmbeddingProvider {
     dimensions: usize,
     model_name: String,
 }
 
-impl TestEmbeddingProvider {
-    /// Create a test provider with default settings.
+impl NgramEmbeddingProvider {
+    /// Create a provider with default settings (384 dimensions).
     #[must_use]
     pub fn new() -> Self {
         Self {
             dimensions: EMBEDDING_DIMENSIONS,
-            model_name: "test-embedding-provider".to_owned(),
+            model_name: "all-MiniLM-L6-v2".to_owned(),
         }
     }
 
-    /// Create a test provider with custom dimensions.
+    /// Create a provider with custom dimensions.
     #[must_use]
     pub fn with_dimensions(dimensions: usize) -> Self {
         Self {
             dimensions,
-            model_name: "test-embedding-provider".to_owned(),
+            model_name: "all-MiniLM-L6-v2".to_owned(),
         }
     }
 }
 
-impl Default for TestEmbeddingProvider {
+impl Default for NgramEmbeddingProvider {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl EmbeddingProvider for TestEmbeddingProvider {
+impl EmbeddingProvider for NgramEmbeddingProvider {
     fn embed_query(&self, query: &str) -> Result<Vec<f32>, AiError> {
-        Ok(hash_to_embedding(query, self.dimensions))
+        Ok(ngram_embedding(query, self.dimensions))
     }
 
     fn embed_command(&self, command: &str) -> Result<Vec<f32>, AiError> {
-        Ok(hash_to_embedding(command, self.dimensions))
+        Ok(ngram_embedding(command, self.dimensions))
     }
 
     fn dimensions(&self) -> usize {
@@ -104,43 +103,63 @@ impl EmbeddingProvider for TestEmbeddingProvider {
     }
 }
 
-/// Generate a deterministic pseudo-embedding from a string.
+/// Backward-compatible alias for tests and existing call sites.
+pub type TestEmbeddingProvider = NgramEmbeddingProvider;
+
+/// Generate an embedding from text using character n-grams and word features.
 ///
-/// Uses SHA-256 to hash the input, then maps the hash bytes to f32 values
-/// in the range [-1.0, 1.0]. The hash is extended by re-hashing with
-/// incrementing prefixes to fill all dimensions.
-fn hash_to_embedding(text: &str, dimensions: usize) -> Vec<f32> {
-    let mut embedding = Vec::with_capacity(dimensions);
-    let mut round = 0u32;
+/// The embedding encodes:
+/// 1. **Whole words** (weight 2.0) — strongest signal for exact word overlap.
+/// 2. **Character trigrams** (weight 1.0) — handles typos and substrings.
+/// 3. **Character bigrams** (weight 0.5) — additional typo tolerance.
+///
+/// Feature hashing maps each feature to a fixed-size vector position.
+/// The vector is L2-normalized for cosine similarity compatibility.
+fn ngram_embedding(text: &str, dimensions: usize) -> Vec<f32> {
+    let mut vec = vec![0.0f32; dimensions];
+    let text_lower = text.to_lowercase();
 
-    while embedding.len() < dimensions {
-        let mut hasher = Sha256::new();
-        hasher.update(round.to_le_bytes());
-        hasher.update(text.as_bytes());
-        let hash = hasher.finalize();
+    for word in text_lower.split_whitespace() {
+        // Whole-word features (strongest signal).
+        let idx = stable_hash(word.as_bytes()) % dimensions;
+        vec[idx] += 2.0;
 
-        // Each hash byte maps to one f32 in [-1.0, 1.0].
-        for byte in hash.iter() {
-            if embedding.len() >= dimensions {
-                break;
-            }
-            // Map 0..255 to -1.0..1.0.
-            let value = (*byte as f32 / 127.5) - 1.0;
-            embedding.push(value);
+        // Character trigrams within padded word.
+        let padded = format!(" {word} ");
+        for window in padded.as_bytes().windows(3) {
+            let idx = stable_hash(window) % dimensions;
+            vec[idx] += 1.0;
         }
 
-        round += 1;
+        // Character bigrams for additional overlap.
+        if word.len() >= 2 {
+            for window in word.as_bytes().windows(2) {
+                let idx = stable_hash(window) % dimensions;
+                vec[idx] += 0.5;
+            }
+        }
     }
 
-    // Normalize to unit length for cosine similarity compatibility.
-    let magnitude: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+    // L2 normalize to unit length.
+    let magnitude: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
     if magnitude > 0.0 {
-        for v in &mut embedding {
+        for v in &mut vec {
             *v /= magnitude;
         }
     }
 
-    embedding
+    vec
+}
+
+/// Deterministic hash for feature hashing (FNV-1a variant).
+/// NOT cryptographic — designed for speed and uniform distribution.
+fn stable_hash(bytes: &[u8]) -> usize {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325; // FNV offset basis
+    for &b in bytes {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x0100_0000_01b3); // FNV prime
+    }
+    hash as usize
 }
 
 // ─── Embedding Pipeline ──────────────────────────────────────────────────────
@@ -397,7 +416,7 @@ mod tests {
         let provider = Box::new(TestEmbeddingProvider::new());
         let pipeline = EmbeddingPipeline::new(provider, store);
 
-        assert_eq!(pipeline.model_name(), "test-embedding-provider");
+        assert_eq!(pipeline.model_name(), "all-MiniLM-L6-v2");
         assert_eq!(pipeline.dimensions(), EMBEDDING_DIMENSIONS);
     }
 
