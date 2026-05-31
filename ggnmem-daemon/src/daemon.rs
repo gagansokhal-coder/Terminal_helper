@@ -260,19 +260,35 @@ async fn handle_connection(
             limit,
             cwd,
             recent_only,
+            ai_enabled,
             ..
         } => {
-            match storage::search_commands(
-                state.database_path.clone(),
-                query,
-                limit,
-                cwd,
-                recent_only,
-            )
-            .await
-            {
-                Ok(results) => DaemonResponse::search_results(results),
-                Err(error) => DaemonResponse::error("search_failed", error.to_string()),
+            if ai_enabled {
+                match storage::hybrid_search_commands(
+                    state.database_path.clone(),
+                    query,
+                    limit,
+                    cwd,
+                    recent_only,
+                )
+                .await
+                {
+                    Ok(results) => DaemonResponse::search_results(results),
+                    Err(error) => DaemonResponse::error("search_failed", error.to_string()),
+                }
+            } else {
+                match storage::search_commands(
+                    state.database_path.clone(),
+                    query,
+                    limit,
+                    cwd,
+                    recent_only,
+                )
+                .await
+                {
+                    Ok(results) => DaemonResponse::search_results(results),
+                    Err(error) => DaemonResponse::error("search_failed", error.to_string()),
+                }
             }
         }
         DaemonRequest::CleanupCommands { mode, .. } => {
@@ -298,6 +314,12 @@ async fn handle_connection(
             match storage::get_usage_stats(state.database_path.clone()).await {
                 Ok(stats) => DaemonResponse::stats_result(stats, uptime_ms),
                 Err(error) => DaemonResponse::error("stats_failed", error.to_string()),
+            }
+        }
+        DaemonRequest::SemanticSearch { query, limit, .. } => {
+            match storage::semantic_search(state.database_path.clone(), query, limit).await {
+                Ok(results) => DaemonResponse::semantic_results(results),
+                Err(error) => DaemonResponse::error("semantic_search_failed", error.to_string()),
             }
         }
     };

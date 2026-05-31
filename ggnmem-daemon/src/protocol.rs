@@ -6,6 +6,13 @@ use crate::health::HealthStatus;
 pub type ProtocolVersion = u16;
 pub const PROTOCOL_VERSION: ProtocolVersion = 1;
 
+/// Weight for FTS results in Reciprocal Rank Fusion hybrid search.
+pub const FTS_WEIGHT: f32 = 0.6;
+/// Weight for semantic results in Reciprocal Rank Fusion hybrid search.
+pub const SEMANTIC_WEIGHT: f32 = 0.4;
+/// RRF constant `k` — controls the impact of lower-ranked results.
+pub const RRF_K: f32 = 60.0;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionPayload {
     pub session_id: String,
@@ -53,6 +60,18 @@ pub struct SearchResultSummary {
     pub score: f64,
 }
 
+/// A single semantic search result returned over IPC.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SemanticResultSummary {
+    pub command: String,
+    pub cwd: String,
+    pub exit_code: Option<i32>,
+    pub duration_ms: Option<i64>,
+    pub completed_at_ms: i64,
+    /// Cosine similarity score in [0.0, 1.0] (1.0 = identical).
+    pub similarity: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DaemonRequest {
     Ping {
@@ -84,6 +103,9 @@ pub enum DaemonRequest {
         cwd: Option<String>,
         /// Sort by recency only, ignoring scoring weights.
         recent_only: bool,
+        /// Whether to apply semantic reranking (hybrid search).
+        #[serde(default)]
+        ai_enabled: bool,
     },
     CleanupCommands {
         version: ProtocolVersion,
@@ -97,6 +119,11 @@ pub enum DaemonRequest {
     },
     GetStats {
         version: ProtocolVersion,
+    },
+    SemanticSearch {
+        version: ProtocolVersion,
+        query: String,
+        limit: u32,
     },
 }
 
@@ -145,6 +172,7 @@ impl DaemonRequest {
             limit,
             cwd: None,
             recent_only: false,
+            ai_enabled: false,
         }
     }
 
@@ -161,6 +189,34 @@ impl DaemonRequest {
             limit,
             cwd,
             recent_only,
+            ai_enabled: false,
+        }
+    }
+
+    /// Build a search request with AI-enabled hybrid mode.
+    #[must_use]
+    pub fn search_commands_hybrid(
+        query: impl Into<String>,
+        limit: u32,
+        cwd: Option<String>,
+        recent_only: bool,
+    ) -> Self {
+        Self::SearchCommands {
+            version: PROTOCOL_VERSION,
+            query: query.into(),
+            limit,
+            cwd,
+            recent_only,
+            ai_enabled: true,
+        }
+    }
+
+    #[must_use]
+    pub fn semantic_search(query: impl Into<String>, limit: u32) -> Self {
+        Self::SemanticSearch {
+            version: PROTOCOL_VERSION,
+            query: query.into(),
+            limit,
         }
     }
 
@@ -307,6 +363,14 @@ impl DaemonResponse {
             kind: DaemonResponseKind::StatsResult { stats, uptime_ms },
         }
     }
+
+    #[must_use]
+    pub fn semantic_results(results: Vec<SemanticResultSummary>) -> Self {
+        Self {
+            version: PROTOCOL_VERSION,
+            kind: DaemonResponseKind::SemanticResults { results },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -343,5 +407,8 @@ pub enum DaemonResponseKind {
     StatsResult {
         stats: ggnmem_db::UsageStats,
         uptime_ms: u64,
+    },
+    SemanticResults {
+        results: Vec<SemanticResultSummary>,
     },
 }

@@ -30,4 +30,7 @@ pub enum DaemonError {
 
     #[error("task join error: {0}")]
     Join(#[from] tokio::task::JoinError),
+
+    #[error("AI error: {0}")]
+    Ai(#[from] ggnmem_ai::AiError),
 }

@@ -12,6 +12,7 @@ authors.workspace = true
 anyhow.workspace = true
 bincode.workspace = true
 fs2.workspace = true
+ggnmem-ai = { path = "../ggnmem-ai" }
 ggnmem-db = { path = "../ggnmem-db" }
 serde.workspace = true
 thiserror.workspace = true

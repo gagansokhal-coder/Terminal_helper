@@ -350,6 +350,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "fs2",
+ "ggnmem-ai",
  "ggnmem-db",
  "serde",
  "tempfile",

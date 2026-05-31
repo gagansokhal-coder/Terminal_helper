@@ -17,5 +17,6 @@ pub use health::{HealthState, HealthStatus};
 pub use ipc::{IpcClient, IpcServer};
 pub use protocol::{
     CommandPayload, CommandSummary, DaemonRequest, DaemonResponse, DaemonResponseKind,
-    ProtocolVersion, SearchResultSummary, SessionPayload, PROTOCOL_VERSION,
+    ProtocolVersion, SearchResultSummary, SemanticResultSummary, SessionPayload, FTS_WEIGHT,
+    PROTOCOL_VERSION, RRF_K, SEMANTIC_WEIGHT,
 };
