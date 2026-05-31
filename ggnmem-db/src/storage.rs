@@ -230,6 +230,69 @@ impl Database {
         Ok(count)
     }
 
+    /// List all commands as `(id, command_text)` pairs for the embedding indexer.
+    ///
+    /// Returns every unique command in the database.  The indexer
+    /// cross-references these IDs against the vector store to find
+    /// un-indexed commands.
+    pub fn list_commands_for_indexing(&self) -> DbResult<Vec<(String, String)>> {
+        let mut stmt = self
+            .connection
+            .prepare("SELECT id, command FROM commands ORDER BY completed_at_ms ASC")?;
+        let pairs: Vec<(String, String)> = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(pairs)
+    }
+
+    /// Look up command details by command ID.
+    ///
+    /// Used by semantic search to enrich vector matches with metadata.
+    pub fn get_command_by_id(&self, id: &str) -> DbResult<Option<CommandRecord>> {
+        self.connection
+            .query_row(
+                r#"
+                SELECT
+                    id,
+                    session_id,
+                    command,
+                    normalized_command,
+                    cwd,
+                    exit_code,
+                    duration_ms,
+                    started_at_ms,
+                    completed_at_ms,
+                    content_hash,
+                    created_at_ms,
+                    updated_at_ms
+                FROM commands
+                WHERE id = :id
+                "#,
+                named_params! { ":id": id },
+                |row| {
+                    Ok(CommandRecord {
+                        id: CommandId::from_storage(row.get::<_, String>(0)?),
+                        session_id: SessionId::from_storage(row.get::<_, String>(1)?),
+                        command: row.get(2)?,
+                        normalized_command: row.get(3)?,
+                        cwd: row.get(4)?,
+                        exit_code: row.get(5)?,
+                        duration_ms: row.get(6)?,
+                        started_at_ms: row.get(7)?,
+                        completed_at_ms: row.get(8)?,
+                        content_hash: row.get(9)?,
+                        created_at_ms: row.get(10)?,
+                        updated_at_ms: row.get(11)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
     pub fn get_session(&self, id: &SessionId) -> DbResult<Option<SessionRecord>> {
         self.connection
             .query_row(
