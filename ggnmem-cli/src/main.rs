@@ -48,6 +48,7 @@ async fn main() -> Result<()> {
         Some("autostart") => cmd_autostart(&args),
         Some("export") => export::cmd_export(&args).await,
         Some("ai") => cmd_ai(&args),
+        Some("semantic") => semantic(&args).await,
         Some(command) => bail!("unknown command: {command}"),
         None => {
             print_usage();
@@ -109,6 +110,11 @@ fn print_usage() {
     println!("  --cwd            Boost results from current directory");
     println!("  --recent         Sort by recency only");
     println!("  --json           Output as JSON");
+    println!();
+    println!("semantic search:");
+    println!("  semantic <query>  Semantic search (vector similarity)");
+    println!("  --limit N        Maximum results (default: 10)");
+    println!("  --json           Output as JSON");
 }
 
 // ─── Subcommand routers ──────────────────────────────────────────────────────
@@ -147,7 +153,8 @@ fn cmd_ai(args: &[String]) -> Result<()> {
         Some("models") => ai_models(),
         Some("install") => ai_install(args),
         Some("remove") => ai_remove(args),
-        Some(sub) => bail!("unknown ai subcommand: {sub}\n\nusage:\n  ggnmem ai status\n  ggnmem ai enable\n  ggnmem ai disable\n  ggnmem ai models\n  ggnmem ai install <model>\n  ggnmem ai remove <model>"),
+        Some("reindex") => ai_reindex(),
+        Some(sub) => bail!("unknown ai subcommand: {sub}\n\nusage:\n  ggnmem ai status\n  ggnmem ai enable\n  ggnmem ai disable\n  ggnmem ai models\n  ggnmem ai install <model>\n  ggnmem ai remove <model>\n  ggnmem ai reindex"),
     }
 }
 
@@ -743,13 +750,30 @@ async fn search(args: &[String]) -> Result<()> {
         bail!("usage: ggnmem search <query> [--limit N] [--cwd] [--recent] [--json]");
     }
 
-    let response = request(DaemonRequest::search_commands_with_options(
-        &query,
-        limit,
-        cwd,
-        recent_only,
-    ))
-    .await?;
+    // Check AI config to decide between hybrid and plain FTS search.
+    let cfg = config::load().ok();
+    let ai_enabled = cfg
+        .as_ref()
+        .map(|c| c.ai.ai_enabled && c.ai.semantic_search)
+        .unwrap_or(false);
+
+    let response = if ai_enabled {
+        request(DaemonRequest::search_commands_hybrid(
+            &query,
+            limit,
+            cwd,
+            recent_only,
+        ))
+        .await?
+    } else {
+        request(DaemonRequest::search_commands_with_options(
+            &query,
+            limit,
+            cwd,
+            recent_only,
+        ))
+        .await?
+    };
 
     match response.kind {
         DaemonResponseKind::SearchResults { results } => {
@@ -1067,6 +1091,28 @@ fn ai_status() -> Result<()> {
     print!("  vector count     ... ");
     println!("{}", store.count().unwrap_or(0));
 
+    // Index progress.
+    let ai_cfg_path = ai_cfg.clone();
+    let db_path = default_db_path();
+    if db_path.exists() {
+        let provider = Box::new(ggnmem_ai::TestEmbeddingProvider::new());
+        let progress_store = ggnmem_ai::VectorStore::new(ai_cfg_path.vector_db_path);
+        let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, progress_store);
+        match ggnmem_ai::indexer::get_index_progress(&db_path, &pipeline) {
+            Ok(progress) => {
+                println!(
+                    "  index progress   ... {} / {} ({}%)",
+                    progress.indexed,
+                    progress.total,
+                    progress.percent()
+                );
+            }
+            Err(_) => {
+                println!("  index progress   ... \u{2014}");
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1165,9 +1211,7 @@ fn ai_install(args: &[String]) -> Result<()> {
 }
 
 fn ai_remove(args: &[String]) -> Result<()> {
-    let model_name = args
-        .get(3)
-        .context("usage: ggnmem ai remove <model>")?;
+    let model_name = args.get(3).context("usage: ggnmem ai remove <model>")?;
 
     let cfg = config::load()?;
     let ai_cfg = build_ai_config(&cfg);
@@ -1180,6 +1224,197 @@ fn ai_remove(args: &[String]) -> Result<()> {
         }
         Err(e) => bail!("{e}"),
     }
+}
+
+fn ai_reindex() -> Result<()> {
+    let cfg = config::load()?;
+    if !cfg.ai.ai_enabled {
+        bail!("AI features are disabled. Enable with: ggnmem ai enable");
+    }
+
+    let ai_cfg = build_ai_config(&cfg);
+    let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir.clone());
+    if !mgr.is_installed(&cfg.ai.model_name) {
+        bail!(
+            "model '{}' is not installed. Install with: ggnmem ai install",
+            cfg.ai.model_name
+        );
+    }
+
+    let db_path = default_db_path();
+    if !db_path.exists() {
+        bail!(
+            "database not found at {}. Start the daemon first.",
+            db_path.display()
+        );
+    }
+
+    let provider = Box::new(ggnmem_ai::TestEmbeddingProvider::new());
+    let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path);
+    let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store);
+
+    println!("ggnmem ai reindex");
+    println!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
+    println!("  deleting existing embeddings...");
+
+    match ggnmem_ai::indexer::reindex_all_commands(&db_path, &pipeline, |done, total| {
+        if total > 0 {
+            eprint!("\r  indexing: {done} / {total}");
+        }
+    }) {
+        Ok(count) => {
+            eprintln!();
+            println!("  \u{2713} indexed {count} commands");
+            println!("  vector count: {}", pipeline.vector_count().unwrap_or(0));
+            Ok(())
+        }
+        Err(e) => bail!("reindex failed: {e}"),
+    }
+}
+
+// ─── Semantic search (CLI-direct, no daemon needed) ──────────────────────────
+
+async fn semantic(args: &[String]) -> Result<()> {
+    let limit = parse_named_arg(args, "--limit")
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(10);
+    let json_output = has_flag(args, "--json");
+
+    // Build query from positional args.
+    let valued_flags = ["--limit"];
+    let boolean_flags = ["--json"];
+
+    let mut query_parts: Vec<&str> = Vec::new();
+    let mut skip_next = false;
+    for arg in args.iter().skip(2) {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if valued_flags.contains(&arg.as_str()) {
+            skip_next = true;
+            continue;
+        }
+        if boolean_flags.contains(&arg.as_str()) {
+            continue;
+        }
+        query_parts.push(arg);
+    }
+
+    let query = query_parts.join(" ");
+    if query.is_empty() {
+        bail!("usage: ggnmem semantic <query> [--limit N] [--json]");
+    }
+
+    let cfg = config::load()?;
+    if !cfg.ai.ai_enabled {
+        bail!("AI features are disabled. Enable with: ggnmem ai enable");
+    }
+
+    let ai_cfg = build_ai_config(&cfg);
+    let db_path = default_db_path();
+    if !db_path.exists() {
+        bail!(
+            "database not found at {}. Start the daemon first.",
+            db_path.display()
+        );
+    }
+
+    let provider = Box::new(ggnmem_ai::TestEmbeddingProvider::new());
+    let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path);
+    let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store);
+
+    // Embed query and search vector store.
+    let matches = pipeline
+        .search_embedding(&query, limit as usize + 10)
+        .context("semantic search failed")?;
+
+    if matches.is_empty() {
+        println!("no semantic results for: {query}");
+        println!("(run `ggnmem ai reindex` to build the embedding index)");
+        return Ok(());
+    }
+
+    // Cross-reference with commands DB for metadata.
+    let database = ggnmem_db::Database::open(&ggnmem_db::DatabaseConfig::new(db_path))?;
+    let mut results: Vec<SemanticDisplayResult> = Vec::new();
+
+    for m in &matches {
+        if let Ok(Some(cmd)) = database.get_command_by_id(&m.id) {
+            let similarity = (1.0 - m.distance as f64).clamp(0.0, 1.0);
+            results.push(SemanticDisplayResult {
+                command: cmd.command,
+                cwd: cmd.cwd,
+                exit_code: cmd.exit_code,
+                duration_ms: cmd.duration_ms,
+                completed_at_ms: cmd.completed_at_ms,
+                similarity,
+            });
+        }
+    }
+
+    results.truncate(limit as usize);
+
+    if json_output {
+        let json =
+            serde_json::to_string_pretty(&results).context("serialize semantic results to JSON")?;
+        println!("{json}");
+        return Ok(());
+    }
+
+    println!(
+        "found {} semantic result{} for: {query}",
+        results.len(),
+        if results.len() == 1 { "" } else { "s" }
+    );
+    println!();
+
+    for result in &results {
+        let exit_str = result
+            .exit_code
+            .map(|c| {
+                if c == 0 {
+                    "  \u{2713} ".to_owned()
+                } else {
+                    format!("\u{2717}{c:>2} ")
+                }
+            })
+            .unwrap_or_else(|| " ?  ".to_owned());
+        let ts = format_timestamp(result.completed_at_ms);
+        let dur = format_duration(result.duration_ms);
+        let sim_pct = (result.similarity * 100.0) as u32;
+
+        println!(
+            "  {exit_str} {ts}  {dur:>7}  [sim {sim_pct:>3}%]  {cwd}",
+            cwd = result.cwd
+        );
+        println!("       $ {cmd}", cmd = result.command);
+        println!();
+    }
+
+    Ok(())
+}
+
+/// Lightweight struct for displaying semantic search results.
+#[derive(Debug, Clone, serde::Serialize)]
+struct SemanticDisplayResult {
+    command: String,
+    cwd: String,
+    exit_code: Option<i32>,
+    duration_ms: Option<i64>,
+    completed_at_ms: i64,
+    similarity: f64,
+}
+
+/// Get the default database path (`~/.local/share/ggnmem/ggnmem.db`).
+fn default_db_path() -> PathBuf {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("~"));
+    let data_home = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".local").join("share"));
+    data_home.join("ggnmem").join("ggnmem.db")
 }
 
 // ─── IPC helper ──────────────────────────────────────────────────────────────
