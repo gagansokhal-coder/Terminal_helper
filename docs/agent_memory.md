@@ -1756,6 +1756,132 @@ Model: Gemini 3.1 Pro (High)
 
 ---
 
+## Phase 12B — Semantic Search MVP
+
+Session: 2026-05-31
+
+### Summary
+
+Implemented natural-language retrieval of historical commands using embedding-based vector search with brute-force cosine similarity fallback. Added `ggnmem semantic <query>` CLI command, `ggnmem ai reindex` for full rebuild, hybrid FTS+semantic search via Reciprocal Rank Fusion (RRF), and enhanced `ggnmem ai status` with index progress.
+
+### Architecture
+
+```
+ggnmem semantic "docker"
+    │
+    ▼
+CLI (direct, no daemon)
+    ├── EmbeddingPipeline.search_embedding(query)
+    │       → TestEmbeddingProvider.embed() → 384-dim vector
+    │       → VectorStore.search() → brute-force cosine scan
+    │       → VectorMatch { id, distance }[]
+    │
+    ├── Database.get_command_by_id(id)
+    │       → CommandRecord { command, cwd, exit_code, ... }
+    │
+    └── Display: command, similarity%, cwd, timestamp
+
+ggnmem search "docker"  (AI enabled)
+    │
+    ▼
+CLI → IPC → Daemon
+    ├── FTS5 trigram + fuzzy → SearchResult[]
+    ├── VectorStore.search() → VectorMatch[]
+    └── RRF merge → reranked SearchResult[]
+```
+
+### RRF Hybrid Search Design
+
+Reciprocal Rank Fusion merges two ranked lists (FTS and semantic) into a single ranking:
+
+```
+score_i = Σ weight_j / (k + rank_ij)  for each list j
+```
+
+Constants (hardcoded, not user-configurable):
+- `FTS_WEIGHT = 0.6`
+- `SEMANTIC_WEIGHT = 0.4`
+- `RRF_K = 60.0`
+
+When AI is disabled or no embeddings exist, pure FTS is used unchanged.
+
+### Brute-Force Cosine Fallback
+
+Instead of requiring `sqlite-vec` (which needs unsafe FFI for `Connection::load_extension()`), the vector search uses a pure-Rust brute-force cosine distance scan over the `vector_meta` table:
+
+```rust
+fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    1.0 - dot
+}
+```
+
+This is O(n) but acceptable for <100K commands. When `sqlite-vec` is pre-loaded (e.g. via `LD_PRELOAD`), the vec0 `MATCH` query is used instead.
+
+### Files Modified
+
+**ggnmem-ai:**
+- `vector.rs` — brute-force cosine search, `delete_all()`, `list_indexed_ids()`, `bytes_to_floats()`, `cosine_distance()`
+- `embedding.rs` — `batch_index()`, `delete_all_embeddings()`, `indexed_ids()`, `provider()`
+- `indexer.rs` — [NEW] `IndexProgress`, `get_index_progress()`, `index_all_commands()`, `reindex_all_commands()`
+- `lib.rs` — registered `indexer` module, exported `IndexProgress`
+
+**ggnmem-db:**
+- `storage.rs` — `list_commands_for_indexing()`, `get_command_by_id()`
+
+**ggnmem-daemon:**
+- `Cargo.toml` — added `ggnmem-ai` dependency
+- `protocol.rs` — `SemanticSearch` request, `SemanticResults` response, `SemanticResultSummary`, `ai_enabled` field on `SearchCommands`, RRF constants
+- `storage.rs` — `semantic_search()`, `hybrid_search_commands()` with RRF merge
+- `daemon.rs` — routed `SemanticSearch`, dispatched hybrid when `ai_enabled=true`
+- `error.rs` — added `AiError` variant
+- `lib.rs` — exported new types
+
+**ggnmem-cli:**
+- `main.rs` — `ggnmem semantic <query>`, `ggnmem ai reindex`, enhanced `ai status` with index progress, hybrid search flag in `ggnmem search`
+
+### New CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `ggnmem semantic <query>` | Pure semantic search with similarity scores |
+| `ggnmem ai reindex` | Delete + rebuild all embeddings with progress |
+| `ggnmem ai status` | Now shows index progress (indexed/total/%) |
+
+### Validation
+
+- `cargo check --workspace` — clean
+- `cargo test --workspace` — 92 passed, 0 failed
+- `cargo clippy --workspace -- -D warnings` — zero warnings
+- `cargo fmt --check` — clean
+
+### New Tests Added
+
+| Test | Module |
+|------|--------|
+| `search_brute_force_returns_results` | vector.rs |
+| `search_brute_force_ranking` | vector.rs |
+| `delete_all_clears_store` | vector.rs |
+| `list_indexed_ids_returns_stored_ids` | vector.rs |
+| `cosine_distance_identical_is_zero` | vector.rs |
+| `cosine_distance_orthogonal_is_one` | vector.rs |
+| `test_pipeline_search_returns_results` | embedding.rs |
+| `test_pipeline_batch_index` | embedding.rs |
+| `test_pipeline_delete_all` | embedding.rs |
+| `test_index_progress_empty_db` | indexer.rs |
+| `test_index_all_commands` | indexer.rs |
+| `test_incremental_indexing` | indexer.rs |
+| `test_reindex_clears_and_rebuilds` | indexer.rs |
+
+### Limitations
+
+- `TestEmbeddingProvider` uses SHA-256 hash embeddings — NOT semantically meaningful. "docker" and "container" will NOT be close. True semantic retrieval requires a real model (ONNX/Candle, future phase).
+- Typo tolerance ("dockr" → "docker") works via existing FTS/fuzzy cascade, not via semantic embeddings.
+- `unsafe_code = "forbid"` remains workspace-wide. sqlite-vec extension loading requires pre-loading via `LD_PRELOAD`.
+- RRF weights are hardcoded constants, not user-configurable.
+
+---
+
 # Final Directive
 
 Agents must optimize for:
