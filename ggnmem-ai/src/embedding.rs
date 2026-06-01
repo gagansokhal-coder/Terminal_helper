@@ -1,13 +1,14 @@
-//! Embedding pipeline interfaces and test implementations.
+//! Embedding pipeline interfaces and implementations.
 //!
 //! Defines the `EmbeddingProvider` trait for generating vector embeddings
 //! from text, and the `EmbeddingPipeline` orchestrator that combines a
 //! provider with a vector store.
 //!
-//! Phase 12A: interfaces only + test implementation.
-//! No real model loading, no ML runtime, no inference.
-//! The `TestEmbeddingProvider` generates deterministic pseudo-embeddings
-//! based on string hashing for test/development use.
+//! Providers:
+//! - `NgramEmbeddingProvider` — lightweight lexical embeddings (always available)
+//! - `MiniLmEmbeddingProvider` — real neural embeddings via ONNX (feature = "onnx")
+//!
+//! Use `create_provider()` to select the best available provider.
 
 use crate::error::{AiError, AiResult};
 use crate::vector::{VectorMatch, VectorStore, EMBEDDING_DIMENSIONS};
@@ -250,8 +251,35 @@ impl EmbeddingPipeline {
     }
 }
 
+// ─── Provider Factory ────────────────────────────────────────────────────────
+
+/// Create the best available embedding provider.
+///
+/// Selection logic:
+/// 1. If the `onnx` feature is enabled AND real model files exist in
+///    `model_dir`, loads `MiniLmEmbeddingProvider` for neural inference.
+/// 2. Otherwise, falls back to `NgramEmbeddingProvider` (lexical only).
+///
+/// This is the single decision point for embedding backend selection.
+pub fn create_provider(
+    models_dir: &std::path::Path,
+    model_name: &str,
+) -> (Box<dyn EmbeddingProvider>, &'static str) {
+    #[cfg(feature = "onnx")]
+    {
+        let model_dir = models_dir.join(model_name);
+        if crate::onnx::has_onnx_model(&model_dir) {
+            match crate::onnx::MiniLmEmbeddingProvider::load(&model_dir) {
+                Ok(provider) => return (Box::new(provider), "MiniLM ONNX"),
+                Err(_) => { /* fall through to ngram */ }
+            }
+        }
+    }
+    let _ = (models_dir, model_name); // suppress unused warnings when onnx disabled
+    (Box::new(NgramEmbeddingProvider::new()), "N-gram (fallback)")
+}
+
 // ─── Standalone interface functions ──────────────────────────────────────────
-// These match the Phase 12A spec for interface stubs.
 
 /// Generate an embedding for a search query.
 ///

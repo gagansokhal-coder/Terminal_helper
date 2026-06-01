@@ -24,6 +24,18 @@ pub enum AiError {
     #[error("vector database error: {0}")]
     VectorDbError(String),
 
+    #[error("ONNX runtime error: {0}")]
+    OnnxError(String),
+
+    #[error("tokenizer error: {0}")]
+    TokenizerError(String),
+
+    #[error("model download failed: {0}")]
+    ModelDownloadError(String),
+
+    #[error("model integrity check failed: {0}")]
+    ModelIntegrityError(String),
+
     #[error("database error: {0}")]
     Db(#[from] ggnmem_db::DbError),
 
