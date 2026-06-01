@@ -1042,6 +1042,19 @@ fn ai_status() -> Result<()> {
     let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir.clone());
     let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path.clone());
 
+    // Determine provider type.
+    let has_real_model = mgr.has_real_model_files(&ai_cfg.model_name);
+    let provider_name = if has_real_model {
+        "MiniLM ONNX"
+    } else {
+        "N-gram (fallback)"
+    };
+    let backend_name = if has_real_model {
+        "ONNX Runtime"
+    } else {
+        "feature hashing"
+    };
+
     println!("ggnmem ai status");
     println!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
     println!(
@@ -1060,7 +1073,8 @@ fn ai_status() -> Result<()> {
             "\u{2717} false"
         }
     );
-    println!("  provider         ... {}", ai_cfg.embedding_provider);
+    println!("  provider         ... {provider_name}");
+    println!("  embedding backend... {backend_name}");
     println!("  model            ... {}", ai_cfg.model_name);
 
     let model_installed = mgr.is_installed(&ai_cfg.model_name);
@@ -1100,7 +1114,7 @@ fn ai_status() -> Result<()> {
     let ai_cfg_path = ai_cfg.clone();
     let db_path = default_db_path();
     if db_path.exists() {
-        let provider = Box::new(ggnmem_ai::TestEmbeddingProvider::new());
+        let (provider, _) = ggnmem_ai::create_provider(&ai_cfg.models_dir, &ai_cfg.model_name);
         let progress_store = ggnmem_ai::VectorStore::new(ai_cfg_path.vector_db_path);
         let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, progress_store);
         match ggnmem_ai::indexer::get_index_progress(&db_path, &pipeline) {
@@ -1210,18 +1224,37 @@ fn ai_install(args: &[String]) -> Result<()> {
 
     let cfg = config::load()?;
     let ai_cfg = build_ai_config(&cfg);
+    let vector_db_path = ai_cfg.vector_db_path.clone();
     let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir);
 
-    match mgr.install(model_name) {
+    println!("  installing model '{model_name}'...");
+
+    match mgr.install(model_name, |downloaded, total| {
+        if total > 0 {
+            let pct = (downloaded * 100) / total;
+            eprint!("\r  downloading: {} / {} ({pct}%)", format_bytes(downloaded), format_bytes(total));
+        } else {
+            eprint!("\r  downloading: {}", format_bytes(downloaded));
+        }
+    }) {
         Ok(info) => {
+            eprintln!(); // newline after progress
             println!("  \u{2713} model '{}' installed", info.name);
             if let Some(ref path) = info.install_path {
                 println!("  path: {}", path.display());
             }
+            println!("  size: {}", format_bytes(info.disk_size_bytes));
+
+            // Verify integrity.
+            let mgr2 = ggnmem_ai::ModelManager::new(info.install_path.as_ref().unwrap().parent().unwrap().to_path_buf());
+            match mgr2.verify_integrity(model_name) {
+                Ok(()) => println!("  \u{2713} integrity verified"),
+                Err(e) => eprintln!("  \u{26a0} integrity warning: {e}"),
+            }
 
             // Auto-initialize vector DB if AI is enabled.
             if cfg.ai.ai_enabled {
-                let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path);
+                let store = ggnmem_ai::VectorStore::new(vector_db_path);
                 if let Err(e) = store.ensure_initialized() {
                     eprintln!("  warning: could not initialize vector db: {e}");
                 } else {
@@ -1273,21 +1306,23 @@ fn ai_reindex() -> Result<()> {
         );
     }
 
-    let provider = Box::new(ggnmem_ai::TestEmbeddingProvider::new());
+    let (provider, provider_name) = ggnmem_ai::create_provider(&ai_cfg.models_dir, &ai_cfg.model_name);
     let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path);
     let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store);
 
     println!("ggnmem ai reindex");
     println!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
+    println!("  provider: {provider_name}");
     println!("  deleting existing embeddings...");
 
     match ggnmem_ai::indexer::reindex_all_commands(&db_path, &pipeline, |done, total| {
         if total > 0 {
-            eprint!("\r  indexing: {done} / {total}");
+            eprint!("\r  indexed: {done} / {total}");
         }
     }) {
         Ok(count) => {
             eprintln!();
+            println!("  complete.");
             println!("  \u{2713} indexed {count} commands");
             println!("  vector count: {}", pipeline.vector_count().unwrap_or(0));
             Ok(())
@@ -1344,14 +1379,16 @@ async fn semantic(args: &[String]) -> Result<()> {
         );
     }
 
-    let provider = Box::new(ggnmem_ai::TestEmbeddingProvider::new());
+    let (provider, provider_name) = ggnmem_ai::create_provider(&ai_cfg.models_dir, &ai_cfg.model_name);
     let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path);
     let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store);
 
     // Embed query and search vector store.
+    let start = std::time::Instant::now();
     let matches = pipeline
         .search_embedding(&query, limit as usize + 10)
         .context("semantic search failed")?;
+    let elapsed = start.elapsed();
 
     if matches.is_empty() {
         println!("no semantic results for: {query}");
@@ -1387,7 +1424,7 @@ async fn semantic(args: &[String]) -> Result<()> {
     }
 
     println!(
-        "found {} semantic result{} for: {query}",
+        "found {} semantic result{} for: {query}  ({provider_name}, {elapsed:.1?})",
         results.len(),
         if results.len() == 1 { "" } else { "s" }
     );
