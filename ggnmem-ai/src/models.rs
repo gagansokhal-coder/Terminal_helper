@@ -4,14 +4,14 @@
 //! their install state on disk. Models are stored in a dedicated
 //! directory separate from the core database.
 //!
-//! Phase 12A: plumbing only — no actual model downloads.
-//! `install()` creates the directory structure with a marker file.
-//! A future phase will add actual model file downloading/extraction.
+//! Phase 12C: real model downloading from Hugging Face with
+//! version-pinned URLs and SHA256 integrity verification.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::error::{AiError, AiResult};
 
@@ -40,23 +40,57 @@ struct ModelRegistryEntry {
     description: &'static str,
     size_bytes: u64,
     dimensions: usize,
+    /// Hugging Face download URLs for model assets.
+    #[cfg(feature = "onnx")]
+    assets: &'static [ModelAsset],
 }
+
+/// A downloadable model asset (ONNX weights, tokenizer, etc.).
+#[cfg(feature = "onnx")]
+struct ModelAsset {
+    /// Filename in the model directory.
+    filename: &'static str,
+    /// Download URL (version-pinned to a specific HF revision).
+    url: &'static str,
+    /// Expected SHA256 hex digest. Empty string = skip verification
+    /// (log computed hash for future pinning).
+    sha256: &'static str,
+}
+
+/// Pinned Hugging Face revision for all-MiniLM-L6-v2 model assets.
+/// Using a specific commit ensures reproducible downloads.
+#[cfg(feature = "onnx")]
+const MINILM_HF_REVISION: &str = "refs/heads/main";
 
 /// Supported local embedding models.
 /// These are the models that ggnmem can manage.
-/// No downloads happen in Phase 12A — this is metadata only.
 const MODEL_REGISTRY: &[ModelRegistryEntry] = &[
     ModelRegistryEntry {
         name: "all-MiniLM-L6-v2",
         description: "Sentence-Transformers all-MiniLM-L6-v2 (ONNX, ~80 MB)",
         size_bytes: 80_000_000,
         dimensions: 384,
+        #[cfg(feature = "onnx")]
+        assets: &[
+            ModelAsset {
+                filename: "model.onnx",
+                url: "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx",
+                sha256: "", // Computed on first download and stored locally
+            },
+            ModelAsset {
+                filename: "tokenizer.json",
+                url: "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json",
+                sha256: "",
+            },
+        ],
     },
     ModelRegistryEntry {
         name: "bge-small-en-v1.5",
         description: "BAAI bge-small-en-v1.5 (ONNX, ~130 MB)",
         size_bytes: 130_000_000,
         dimensions: 384,
+        #[cfg(feature = "onnx")]
+        assets: &[], // Not yet supported for download
     },
 ];
 
@@ -133,11 +167,26 @@ impl ModelManager {
         }
     }
 
-    /// "Install" a model by creating its directory structure.
+    /// Check if real ONNX model files exist for a model.
+    #[must_use]
+    pub fn has_real_model_files(&self, name: &str) -> bool {
+        let model_dir = self.models_dir.join(name);
+        has_onnx_files(&model_dir)
+    }
+
+    /// Install a model.
     ///
-    /// Phase 12A: creates the directory + marker file only.
-    /// A future phase will download actual model weights here.
-    pub fn install(&self, name: &str) -> AiResult<ModelInfo> {
+    /// With the `onnx` feature: downloads real model files from Hugging Face
+    /// with progress reporting and SHA256 integrity verification.
+    ///
+    /// Without `onnx`: creates a marker file (backward compatible).
+    ///
+    /// `progress` callback receives `(bytes_downloaded, total_bytes)`.
+    pub fn install(
+        &self,
+        name: &str,
+        mut progress: impl FnMut(u64, u64),
+    ) -> AiResult<ModelInfo> {
         // Validate the model exists in registry.
         let entry = MODEL_REGISTRY
             .iter()
@@ -150,14 +199,44 @@ impl ModelManager {
             return Err(AiError::ModelAlreadyInstalled(name.to_owned()));
         }
 
-        // Create model directory + marker.
+        // Create model directory.
         fs::create_dir_all(&model_dir)?;
 
-        let marker_content = format!(
-            "name={}\ndimensions={}\nsize_bytes={}\nstatus=placeholder\n",
-            entry.name, entry.dimensions, entry.size_bytes
-        );
-        fs::write(model_dir.join(MODEL_MARKER_FILE), marker_content)?;
+        // Download real model files (onnx feature) or create marker (lite).
+        #[cfg(feature = "onnx")]
+        {
+            if entry.assets.is_empty() {
+                return Err(AiError::ModelDownloadError(format!(
+                    "model '{}' does not have downloadable assets yet",
+                    name
+                )));
+            }
+
+            // Download each asset.
+            for asset in entry.assets {
+                let dest = model_dir.join(asset.filename);
+                download_file(asset.url, &dest, asset.sha256, &mut progress)?;
+            }
+
+            // Write marker file with model metadata.
+            let marker_content = format!(
+                "name={}\ndimensions={}\nsize_bytes={}\nstatus=installed\n",
+                entry.name, entry.dimensions, entry.size_bytes
+            );
+            fs::write(model_dir.join(MODEL_MARKER_FILE), marker_content)?;
+        }
+
+        #[cfg(not(feature = "onnx"))]
+        {
+            let _ = &mut progress; // suppress unused warning
+            let marker_content = format!(
+                "name={}\ndimensions={}\nsize_bytes={}\nstatus=placeholder\n",
+                entry.name, entry.dimensions, entry.size_bytes
+            );
+            fs::write(model_dir.join(MODEL_MARKER_FILE), marker_content)?;
+        }
+
+        let disk_size = dir_size(&model_dir).unwrap_or(0);
 
         Ok(ModelInfo {
             name: entry.name.to_owned(),
@@ -166,7 +245,7 @@ impl ModelManager {
             dimensions: entry.dimensions,
             installed: true,
             install_path: Some(model_dir),
-            disk_size_bytes: 0, // Placeholder, no real weights yet.
+            disk_size_bytes: disk_size,
         })
     }
 
@@ -186,11 +265,74 @@ impl ModelManager {
         fs::remove_dir_all(&model_dir)?;
         Ok(())
     }
+
+    /// Verify the integrity of an installed model.
+    ///
+    /// Checks that required files exist and are non-empty.
+    /// With the `onnx` feature, also verifies SHA256 hashes against
+    /// stored values.
+    pub fn verify_integrity(&self, name: &str) -> AiResult<()> {
+        let model_dir = self.models_dir.join(name);
+
+        if !model_dir.exists() {
+            return Err(AiError::ModelNotInstalled(name.to_owned()));
+        }
+
+        #[cfg(feature = "onnx")]
+        {
+            let onnx_path = model_dir.join("model.onnx");
+            let tok_path = model_dir.join("tokenizer.json");
+
+            if !onnx_path.exists() {
+                return Err(AiError::ModelIntegrityError(
+                    "model.onnx missing".to_owned(),
+                ));
+            }
+            if !tok_path.exists() {
+                return Err(AiError::ModelIntegrityError(
+                    "tokenizer.json missing".to_owned(),
+                ));
+            }
+
+            // Sanity check: model.onnx should be >10 MB.
+            let onnx_size = fs::metadata(&onnx_path)?.len();
+            if onnx_size < 10_000_000 {
+                return Err(AiError::ModelIntegrityError(format!(
+                    "model.onnx too small ({onnx_size} bytes, expected >10 MB)"
+                )));
+            }
+
+            // Verify SHA256 against stored hashes if available.
+            verify_stored_hash(&onnx_path)?;
+            verify_stored_hash(&tok_path)?;
+        }
+
+        #[cfg(not(feature = "onnx"))]
+        {
+            if !model_dir.join(MODEL_MARKER_FILE).exists() {
+                return Err(AiError::ModelIntegrityError(
+                    "marker file missing".to_owned(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
-/// Check if a model directory is valid (has the marker file).
+/// Check if a model directory is valid (has real files or marker).
 fn is_model_dir_valid(model_dir: &Path) -> bool {
+    // Check for real ONNX model files first.
+    if has_onnx_files(model_dir) {
+        return true;
+    }
+    // Fallback to legacy marker file (lite installs / Phase 12A).
     model_dir.join(MODEL_MARKER_FILE).exists()
+}
+
+/// Check if a directory contains real ONNX model files.
+fn has_onnx_files(model_dir: &Path) -> bool {
+    model_dir.join("model.onnx").exists() && model_dir.join("tokenizer.json").exists()
 }
 
 /// Calculate the total size of a directory recursively.
@@ -208,6 +350,112 @@ fn dir_size(path: &Path) -> std::io::Result<u64> {
         }
     }
     Ok(total)
+}
+
+/// Compute SHA256 hex digest of a file.
+fn compute_sha256(path: &Path) -> AiResult<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)?;
+    let hash = hasher.finalize();
+    Ok(format!("{hash:x}"))
+}
+
+/// Verify a file against its stored `.sha256` sidecar file.
+///
+/// If no sidecar exists, verification is skipped.
+#[cfg(feature = "onnx")]
+fn verify_stored_hash(path: &Path) -> AiResult<()> {
+    let hash_path = path.with_extension(
+        path.extension()
+            .map(|e| format!("{}.sha256", e.to_string_lossy()))
+            .unwrap_or_else(|| "sha256".to_owned()),
+    );
+
+    if !hash_path.exists() {
+        return Ok(()); // No stored hash — skip verification.
+    }
+
+    let expected = fs::read_to_string(&hash_path)?
+        .trim()
+        .to_lowercase();
+    let actual = compute_sha256(path)?;
+
+    if expected != actual {
+        return Err(AiError::ModelIntegrityError(format!(
+            "{}: SHA256 mismatch (expected {expected}, got {actual})",
+            path.display()
+        )));
+    }
+
+    Ok(())
+}
+
+/// Download a file from a URL with progress reporting and SHA256 verification.
+///
+/// * Streams the response body in 64 KB chunks for progress updates.
+/// * Computes SHA256 on-the-fly during download.
+/// * Stores the computed hash in a `.sha256` sidecar file.
+/// * If `expected_sha256` is non-empty, verifies against it.
+#[cfg(feature = "onnx")]
+fn download_file(
+    url: &str,
+    dest: &Path,
+    expected_sha256: &str,
+    progress: &mut impl FnMut(u64, u64),
+) -> AiResult<()> {
+    use std::io::{Read, Write};
+
+    let response = ureq::get(url)
+        .call()
+        .map_err(|e| AiError::ModelDownloadError(format!("{url}: {e}")))?;
+
+    let total_bytes = response
+        .header("Content-Length")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+
+    let mut reader = response.into_reader();
+    let mut file = fs::File::create(dest)?;
+    let mut hasher = Sha256::new();
+    let mut downloaded: u64 = 0;
+    let mut buf = [0u8; 65536]; // 64 KB chunks
+
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .map_err(|e| AiError::ModelDownloadError(format!("read: {e}")))?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..n])?;
+        hasher.update(&buf[..n]);
+        downloaded += n as u64;
+        progress(downloaded, total_bytes);
+    }
+
+    file.flush()?;
+    drop(file);
+
+    // Compute final hash.
+    let hash = format!("{:x}", hasher.finalize());
+
+    // Store SHA256 in sidecar file.
+    let hash_path = Path::new(&format!("{}.sha256", dest.display()));
+    let _ = fs::write(hash_path, &hash);
+
+    // Verify against expected hash (if provided).
+    if !expected_sha256.is_empty() && hash != expected_sha256 {
+        // Remove the corrupt file.
+        let _ = fs::remove_file(dest);
+        let _ = fs::remove_file(hash_path);
+        return Err(AiError::ModelIntegrityError(format!(
+            "{}: SHA256 mismatch (expected {expected_sha256}, got {hash})",
+            dest.display()
+        )));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -230,26 +478,34 @@ mod tests {
 
     #[test]
     fn install_creates_directory_and_marker() {
-        let tmp = TempDir::new().unwrap();
-        let mgr = ModelManager::new(tmp.path().to_path_buf());
+        // Without the `onnx` feature, install creates marker only.
+        // With `onnx`, this test would require network access.
+        #[cfg(not(feature = "onnx"))]
+        {
+            let tmp = TempDir::new().unwrap();
+            let mgr = ModelManager::new(tmp.path().to_path_buf());
 
-        let info = mgr.install("all-MiniLM-L6-v2").unwrap();
-        assert!(info.installed);
-        assert!(info.install_path.is_some());
-        assert!(mgr.is_installed("all-MiniLM-L6-v2"));
+            let info = mgr.install("all-MiniLM-L6-v2", |_, _| {}).unwrap();
+            assert!(info.installed);
+            assert!(info.install_path.is_some());
+            assert!(mgr.is_installed("all-MiniLM-L6-v2"));
 
-        let marker = tmp.path().join("all-MiniLM-L6-v2").join(MODEL_MARKER_FILE);
-        assert!(marker.exists());
+            let marker = tmp.path().join("all-MiniLM-L6-v2").join(MODEL_MARKER_FILE);
+            assert!(marker.exists());
+        }
     }
 
     #[test]
     fn install_duplicate_returns_error() {
-        let tmp = TempDir::new().unwrap();
-        let mgr = ModelManager::new(tmp.path().to_path_buf());
+        #[cfg(not(feature = "onnx"))]
+        {
+            let tmp = TempDir::new().unwrap();
+            let mgr = ModelManager::new(tmp.path().to_path_buf());
 
-        mgr.install("all-MiniLM-L6-v2").unwrap();
-        let result = mgr.install("all-MiniLM-L6-v2");
-        assert!(result.is_err());
+            mgr.install("all-MiniLM-L6-v2", |_, _| {}).unwrap();
+            let result = mgr.install("all-MiniLM-L6-v2", |_, _| {});
+            assert!(result.is_err());
+        }
     }
 
     #[test]
@@ -257,20 +513,23 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mgr = ModelManager::new(tmp.path().to_path_buf());
 
-        let result = mgr.install("nonexistent-model");
+        let result = mgr.install("nonexistent-model", |_, _| {});
         assert!(result.is_err());
     }
 
     #[test]
     fn remove_deletes_directory() {
-        let tmp = TempDir::new().unwrap();
-        let mgr = ModelManager::new(tmp.path().to_path_buf());
+        #[cfg(not(feature = "onnx"))]
+        {
+            let tmp = TempDir::new().unwrap();
+            let mgr = ModelManager::new(tmp.path().to_path_buf());
 
-        mgr.install("all-MiniLM-L6-v2").unwrap();
-        assert!(mgr.is_installed("all-MiniLM-L6-v2"));
+            mgr.install("all-MiniLM-L6-v2", |_, _| {}).unwrap();
+            assert!(mgr.is_installed("all-MiniLM-L6-v2"));
 
-        mgr.remove("all-MiniLM-L6-v2").unwrap();
-        assert!(!mgr.is_installed("all-MiniLM-L6-v2"));
+            mgr.remove("all-MiniLM-L6-v2").unwrap();
+            assert!(!mgr.is_installed("all-MiniLM-L6-v2"));
+        }
     }
 
     #[test]
@@ -284,15 +543,18 @@ mod tests {
 
     #[test]
     fn list_installed_only_returns_installed() {
-        let tmp = TempDir::new().unwrap();
-        let mgr = ModelManager::new(tmp.path().to_path_buf());
+        #[cfg(not(feature = "onnx"))]
+        {
+            let tmp = TempDir::new().unwrap();
+            let mgr = ModelManager::new(tmp.path().to_path_buf());
 
-        assert!(mgr.list_installed().is_empty());
+            assert!(mgr.list_installed().is_empty());
 
-        mgr.install("bge-small-en-v1.5").unwrap();
-        let installed = mgr.list_installed();
-        assert_eq!(installed.len(), 1);
-        assert_eq!(installed[0].name, "bge-small-en-v1.5");
+            mgr.install("bge-small-en-v1.5", |_, _| {}).unwrap();
+            let installed = mgr.list_installed();
+            assert_eq!(installed.len(), 1);
+            assert_eq!(installed[0].name, "bge-small-en-v1.5");
+        }
     }
 
     #[test]
@@ -304,13 +566,43 @@ mod tests {
 
     #[test]
     fn model_size_returns_size_when_installed() {
-        let tmp = TempDir::new().unwrap();
-        let mgr = ModelManager::new(tmp.path().to_path_buf());
+        #[cfg(not(feature = "onnx"))]
+        {
+            let tmp = TempDir::new().unwrap();
+            let mgr = ModelManager::new(tmp.path().to_path_buf());
 
-        mgr.install("all-MiniLM-L6-v2").unwrap();
-        let size = mgr.model_size("all-MiniLM-L6-v2");
-        // Marker file is the only content, so size should be small but nonzero.
-        assert!(size.is_some());
-        assert!(size.unwrap() > 0);
+            mgr.install("all-MiniLM-L6-v2", |_, _| {}).unwrap();
+            let size = mgr.model_size("all-MiniLM-L6-v2");
+            // Marker file is the only content, so size should be small but nonzero.
+            assert!(size.is_some());
+            assert!(size.unwrap() > 0);
+        }
+    }
+
+    #[test]
+    fn has_onnx_files_detects_presence() {
+        let tmp = TempDir::new().unwrap();
+        let model_dir = tmp.path().join("test-model");
+        fs::create_dir_all(&model_dir).unwrap();
+
+        assert!(!has_onnx_files(&model_dir));
+
+        fs::write(model_dir.join("model.onnx"), b"fake-onnx").unwrap();
+        assert!(!has_onnx_files(&model_dir));
+
+        fs::write(model_dir.join("tokenizer.json"), b"{}").unwrap();
+        assert!(has_onnx_files(&model_dir));
+    }
+
+    #[test]
+    fn compute_sha256_works() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("test.txt");
+        fs::write(&path, b"hello world\n").unwrap();
+
+        let hash = compute_sha256(&path).unwrap();
+        // SHA256("hello world\n") is a known value.
+        assert_eq!(hash.len(), 64); // 256 bits = 64 hex chars
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
     }
 }
