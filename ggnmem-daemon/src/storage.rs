@@ -180,7 +180,34 @@ pub async fn run_retention_cleanup(
     Ok(stats)
 }
 
-// ─── Phase 12B: Semantic + Hybrid Search ─────────────────────────────────────
+// ─── Phase 12B/C: Semantic + Hybrid Search ───────────────────────────────────
+
+/// Get or create an embedding provider, caching the ONNX model in a process-
+/// level static so the expensive model load (~2s) happens only once.
+///
+/// Returns a fresh `Box<dyn EmbeddingProvider>` on each call, but the
+/// underlying ONNX Session/Tokenizer are shared via Arc (cheap clone).
+fn cached_provider() -> Box<dyn ggnmem_ai::EmbeddingProvider> {
+    use std::sync::OnceLock;
+
+    // Cache the ONNX provider (or None if model isn't available).
+    static PROVIDER_CACHE: OnceLock<Option<ggnmem_ai::MiniLmEmbeddingProvider>> = OnceLock::new();
+
+    let cached = PROVIDER_CACHE.get_or_init(|| {
+        let ai_cfg = default_ai_config();
+        let model_dir = ai_cfg.models_dir.join(&ai_cfg.model_name);
+        if ggnmem_ai::onnx::has_onnx_model(&model_dir) {
+            ggnmem_ai::MiniLmEmbeddingProvider::load(&model_dir).ok()
+        } else {
+            None
+        }
+    });
+
+    match cached {
+        Some(provider) => Box::new(provider.clone()),
+        None => Box::new(ggnmem_ai::NgramEmbeddingProvider::new()),
+    }
+}
 
 /// Pure semantic search: embed query, search vector store, cross-reference
 /// with the commands database for metadata.
@@ -191,7 +218,7 @@ pub async fn semantic_search(
 ) -> DaemonResult<Vec<crate::protocol::SemanticResultSummary>> {
     let results = tokio::task::spawn_blocking(move || {
         let ai_cfg = default_ai_config();
-        let provider = Box::new(ggnmem_ai::TestEmbeddingProvider::new());
+        let provider = cached_provider();
         let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path);
         let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store);
 
@@ -253,7 +280,7 @@ pub async fn hybrid_search_commands(
 
         // 2. Semantic search.
         let ai_cfg = default_ai_config();
-        let provider = Box::new(ggnmem_ai::TestEmbeddingProvider::new());
+        let provider = cached_provider();
         let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path);
         let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store);
 
