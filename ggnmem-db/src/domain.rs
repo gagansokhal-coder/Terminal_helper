@@ -338,6 +338,12 @@ pub struct UsageStats {
     pub last_cleanup_removed: u64,
     pub last_cleanup_remaining: u64,
     pub last_optimize_at_ms: i64,
+    /// Number of searches that used hybrid (FTS + semantic) mode.
+    pub hybrid_searches: u64,
+    /// Number of standalone semantic searches (`ggnmem semantic`).
+    pub semantic_searches: u64,
+    /// Average search latency in milliseconds (running average).
+    pub avg_search_latency_ms: u64,
 }
 
 /// Result metadata for a database optimization pass.

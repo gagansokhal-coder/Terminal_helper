@@ -6,6 +6,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/0001_initial.sql")),
     (2, include_str!("../migrations/0002_retention_meta.sql")),
     (3, include_str!("../migrations/0003_maintenance_meta.sql")),
+    (4, include_str!("../migrations/0004_search_metrics.sql")),
 ];
 
 pub fn apply_migrations(connection: &mut Connection) -> DbResult<()> {
@@ -48,7 +49,7 @@ mod tests {
 
         assert_eq!(
             current_schema_version(&connection).expect("schema version"),
-            3
+            4
         );
     }
 
@@ -70,7 +71,7 @@ mod tests {
         assert_eq!(last_cleanup_at_ms, 0);
         assert_eq!(
             current_schema_version(&connection).expect("schema version"),
-            3
+            4
         );
     }
 

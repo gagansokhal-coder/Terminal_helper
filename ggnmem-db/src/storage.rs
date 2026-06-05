@@ -821,6 +821,8 @@ impl Database {
         let (last_cleanup_at_ms, last_cleanup_removed, last_cleanup_remaining) =
             self.cleanup_history()?;
         let last_optimize_at_ms = self.get_last_optimize_at_ms()?;
+        let (hybrid_searches, semantic_searches, avg_search_latency_ms) =
+            self.search_metrics()?;
 
         Ok(crate::domain::UsageStats {
             total_commands,
@@ -834,6 +836,9 @@ impl Database {
             last_cleanup_removed,
             last_cleanup_remaining,
             last_optimize_at_ms,
+            hybrid_searches,
+            semantic_searches,
+            avg_search_latency_ms,
         })
     }
 
@@ -1091,6 +1096,46 @@ impl Database {
         Ok(())
     }
 
+    /// Record search latency and whether it was a hybrid search.
+    /// Uses a running-average approach: total_search_latency_ms / searches_performed.
+    pub fn record_search_latency(&self, elapsed_ms: u64, is_hybrid: bool) -> DbResult<()> {
+        let elapsed = elapsed_ms.min(i64::MAX as u64) as i64;
+        if is_hybrid {
+            self.connection.execute(
+                r#"
+                UPDATE maintenance_meta
+                SET total_search_latency_ms = total_search_latency_ms + ?1,
+                    hybrid_searches = hybrid_searches + 1
+                WHERE id = 1
+                "#,
+                [elapsed],
+            )?;
+        } else {
+            self.connection.execute(
+                r#"
+                UPDATE maintenance_meta
+                SET total_search_latency_ms = total_search_latency_ms + ?1
+                WHERE id = 1
+                "#,
+                [elapsed],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Record a standalone semantic search for stats tracking.
+    pub fn record_semantic_search(&self) -> DbResult<()> {
+        self.connection.execute(
+            r#"
+            UPDATE maintenance_meta
+            SET semantic_searches = semantic_searches + 1
+            WHERE id = 1
+            "#,
+            [],
+        )?;
+        Ok(())
+    }
+
     fn page_size(&self) -> DbResult<u64> {
         Ok(self
             .connection
@@ -1149,6 +1194,31 @@ impl Database {
             removed.max(0) as u64,
             remaining.max(0) as u64,
         ))
+    }
+
+    /// Read hybrid/semantic search counters and compute average latency.
+    fn search_metrics(&self) -> DbResult<(u64, u64, u64)> {
+        let (hybrid, semantic, total_latency, total_searches): (i64, i64, i64, i64) = self
+            .connection
+            .query_row(
+                r#"
+                SELECT
+                    hybrid_searches,
+                    semantic_searches,
+                    total_search_latency_ms,
+                    searches_performed
+                FROM maintenance_meta
+                WHERE id = 1
+                "#,
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
+        let avg_latency = if total_searches > 0 {
+            (total_latency / total_searches) as u64
+        } else {
+            0
+        };
+        Ok((hybrid.max(0) as u64, semantic.max(0) as u64, avg_latency))
     }
 
     fn get_last_optimize_at_ms(&self) -> DbResult<i64> {
