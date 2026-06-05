@@ -195,11 +195,7 @@ impl ModelManager {
     /// Without `onnx`: creates a marker file (backward compatible).
     ///
     /// `progress` callback receives `(bytes_downloaded, total_bytes)`.
-    pub fn install(
-        &self,
-        name: &str,
-        mut progress: impl FnMut(u64, u64),
-    ) -> AiResult<ModelInfo> {
+    pub fn install(&self, name: &str, mut progress: impl FnMut(u64, u64)) -> AiResult<ModelInfo> {
         // Validate the model exists in registry.
         let entry = MODEL_REGISTRY
             .iter()
@@ -398,9 +394,7 @@ fn verify_stored_hash(path: &Path) -> AiResult<()> {
         return Ok(()); // No stored hash — skip verification.
     }
 
-    let expected = fs::read_to_string(&hash_path)?
-        .trim()
-        .to_lowercase();
+    let expected = fs::read_to_string(&hash_path)?.trim().to_lowercase();
     let actual = compute_sha256(path)?;
 
     if expected != actual {
