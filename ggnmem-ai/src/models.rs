@@ -174,6 +174,19 @@ impl ModelManager {
         has_onnx_files(&model_dir)
     }
 
+    /// Check if a model is installed with only a marker file and needs
+    /// upgrading to real ONNX weights.
+    ///
+    /// Returns `true` when the model directory exists with a marker but
+    /// without `model.onnx` — meaning it was installed in a previous
+    /// phase (or without the `onnx` feature) and needs re-downloading.
+    #[must_use]
+    pub fn needs_upgrade(&self, name: &str) -> bool {
+        let model_dir = self.models_dir.join(name);
+        // Has marker but no real ONNX files.
+        model_dir.join(MODEL_MARKER_FILE).exists() && !has_onnx_files(&model_dir)
+    }
+
     /// Install a model.
     ///
     /// With the `onnx` feature: downloads real model files from Hugging Face
@@ -195,6 +208,15 @@ impl ModelManager {
 
         let model_dir = self.models_dir.join(name);
 
+        // Check if already fully installed with real ONNX files.
+        if has_onnx_files(&model_dir) {
+            return Err(AiError::ModelAlreadyInstalled(name.to_owned()));
+        }
+
+        // If marker-only install exists and onnx feature is active,
+        // allow upgrade by proceeding with download into the existing dir.
+        // If onnx feature is NOT active and marker exists, it's already installed.
+        #[cfg(not(feature = "onnx"))]
         if is_model_dir_valid(&model_dir) {
             return Err(AiError::ModelAlreadyInstalled(name.to_owned()));
         }
@@ -441,7 +463,8 @@ fn download_file(
     let hash = format!("{:x}", hasher.finalize());
 
     // Store SHA256 in sidecar file.
-    let hash_path = Path::new(&format!("{}.sha256", dest.display()));
+    let hash_path_str = format!("{}.sha256", dest.display());
+    let hash_path = Path::new(&hash_path_str);
     let _ = fs::write(hash_path, &hash);
 
     // Verify against expected hash (if provided).

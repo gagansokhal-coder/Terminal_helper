@@ -98,6 +98,7 @@ fn print_usage() {
     println!("  ai models        List available/installed models");
     println!("  ai install M     Install an embedding model");
     println!("  ai remove M      Remove an installed model");
+    println!("  ai verify-model  Verify model loads and produces embeddings");
     println!("  ai reindex       Rebuild all embeddings");
     println!();
     println!("setup:");
@@ -154,8 +155,9 @@ fn cmd_ai(args: &[String]) -> Result<()> {
         Some("models") => ai_models(),
         Some("install") => ai_install(args),
         Some("remove") => ai_remove(args),
+        Some("verify-model") => ai_verify_model(args),
         Some("reindex") => ai_reindex(),
-        Some(sub) => bail!("unknown ai subcommand: {sub}\n\nusage:\n  ggnmem ai status\n  ggnmem ai enable\n  ggnmem ai disable\n  ggnmem ai models\n  ggnmem ai install <model>\n  ggnmem ai remove <model>\n  ggnmem ai reindex"),
+        Some(sub) => bail!("unknown ai subcommand: {sub}\n\nusage:\n  ggnmem ai status\n  ggnmem ai enable\n  ggnmem ai disable\n  ggnmem ai models\n  ggnmem ai install <model>\n  ggnmem ai remove <model>\n  ggnmem ai verify-model\n  ggnmem ai reindex"),
     }
 }
 
@@ -1225,9 +1227,16 @@ fn ai_install(args: &[String]) -> Result<()> {
     let cfg = config::load()?;
     let ai_cfg = build_ai_config(&cfg);
     let vector_db_path = ai_cfg.vector_db_path.clone();
+    let models_dir = ai_cfg.models_dir.clone();
     let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir);
 
-    println!("  installing model '{model_name}'...");
+    // Detect marker-only installs that need upgrading to real ONNX files.
+    let upgrading = mgr.needs_upgrade(model_name);
+    if upgrading {
+        println!("  upgrading model '{model_name}' from marker to real ONNX files...");
+    } else {
+        println!("  installing model '{model_name}'...");
+    }
 
     match mgr.install(model_name, |downloaded, total| {
         if total > 0 {
@@ -1239,7 +1248,11 @@ fn ai_install(args: &[String]) -> Result<()> {
     }) {
         Ok(info) => {
             eprintln!(); // newline after progress
-            println!("  \u{2713} model '{}' installed", info.name);
+            if upgrading {
+                println!("  \u{2713} model '{}' upgraded to real ONNX files", info.name);
+            } else {
+                println!("  \u{2713} model '{}' installed", info.name);
+            }
             if let Some(ref path) = info.install_path {
                 println!("  path: {}", path.display());
             }
@@ -1251,6 +1264,10 @@ fn ai_install(args: &[String]) -> Result<()> {
                 Ok(()) => println!("  \u{2713} integrity verified"),
                 Err(e) => eprintln!("  \u{26a0} integrity warning: {e}"),
             }
+
+            // Post-install verification: load model through ort and produce
+            // one real embedding to prove the full pipeline works.
+            verify_model_loads(&models_dir, model_name);
 
             // Auto-initialize vector DB if AI is enabled.
             if cfg.ai.ai_enabled {
@@ -1264,6 +1281,53 @@ fn ai_install(args: &[String]) -> Result<()> {
             Ok(())
         }
         Err(e) => bail!("{e}"),
+    }
+}
+
+/// Post-install verification: load the ONNX model and produce one real embedding.
+///
+/// This proves the full pipeline works: tokenizer → ONNX inference → 384-dim vector.
+/// Prints success/failure but does NOT fail the install if verification fails
+/// (the files are already downloaded and verified by checksum).
+fn verify_model_loads(models_dir: &std::path::Path, model_name: &str) {
+
+    print!("  verifying model loads through ONNX Runtime... ");
+
+    let (provider, provider_name) = ggnmem_ai::create_provider(models_dir, model_name);
+
+    // Check we got the real ONNX provider, not the N-gram fallback.
+    if provider_name.contains("fallback") || provider_name.contains("N-gram") {
+        eprintln!("\u{26a0} fell back to {provider_name} (ONNX model may not have loaded)");
+        return;
+    }
+
+    // Produce one real embedding.
+    let test_phrase = "docker compose up";
+    match provider.embed_query(test_phrase) {
+        Ok(embedding) => {
+            let dims = embedding.len();
+            let magnitude: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let sample: Vec<String> = embedding.iter().take(4).map(|v| format!("{v:.4}")).collect();
+
+            println!("\u{2713}");
+            println!("  \u{2713} produced {dims}-dimensional embedding via {provider_name}");
+            println!("    test phrase: \"{test_phrase}\"");
+            println!("    magnitude:   {magnitude:.6} (expected \u{2248}1.0)");
+            println!("    sample[0..4]: [{}]", sample.join(", "));
+
+            if dims != 384 {
+                eprintln!("  \u{26a0} unexpected dimensions: {dims} (expected 384)");
+            }
+            if (magnitude - 1.0).abs() > 0.01 {
+                eprintln!("  \u{26a0} vector not unit-normalized: magnitude = {magnitude}");
+            }
+        }
+        Err(e) => {
+            eprintln!("\u{2717} embedding failed: {e}");
+            eprintln!("  The model files are present but inference failed.");
+            eprintln!("  This may indicate a corrupted download. Try:");
+            eprintln!("    ggnmem ai remove {model_name} && ggnmem ai install {model_name}");
+        }
     }
 }
 
@@ -1281,6 +1345,53 @@ fn ai_remove(args: &[String]) -> Result<()> {
         }
         Err(e) => bail!("{e}"),
     }
+}
+
+fn ai_verify_model(args: &[String]) -> Result<()> {
+    let cfg = config::load()?;
+    let ai_cfg = build_ai_config(&cfg);
+    let model_name = args
+        .get(3)
+        .map(String::as_str)
+        .unwrap_or(&ai_cfg.model_name);
+
+    let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir.clone());
+
+    println!("ggnmem ai verify-model");
+    println!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
+    println!("  model: {model_name}");
+
+    // 1. Check model is installed.
+    if !mgr.is_installed(model_name) {
+        bail!("model '{model_name}' is not installed. Install with: ggnmem ai install");
+    }
+    println!("  \u{2713} model directory exists");
+
+    // 2. Check for real ONNX files (not just a marker).
+    if !mgr.has_real_model_files(model_name) {
+        if mgr.needs_upgrade(model_name) {
+            bail!(
+                "model '{model_name}' has only a placeholder marker (no ONNX files).\n\
+                 Upgrade with: ggnmem ai remove {model_name} && ggnmem ai install"
+            );
+        }
+        bail!("model '{model_name}' is missing ONNX files (model.onnx / tokenizer.json)");
+    }
+    println!("  \u{2713} model.onnx and tokenizer.json present");
+
+    // 3. File integrity (SHA256 sidecar check + size sanity).
+    match mgr.verify_integrity(model_name) {
+        Ok(()) => println!("  \u{2713} integrity verified (SHA256 + size check)"),
+        Err(e) => {
+            eprintln!("  \u{26a0} integrity warning: {e}");
+            eprintln!("    (continuing with model load test)");
+        }
+    }
+
+    // 4. Load ONNX model and produce a real embedding.
+    verify_model_loads(&ai_cfg.models_dir, model_name);
+
+    Ok(())
 }
 
 fn ai_reindex() -> Result<()> {

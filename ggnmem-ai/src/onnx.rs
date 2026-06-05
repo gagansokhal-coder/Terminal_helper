@@ -11,14 +11,14 @@
 //! dependency crates — this module contains zero `unsafe` code.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use ndarray::{Array2, Axis};
-use ort::Session;
+use ort::session::Session;
+use ort::value::Tensor;
 use tokenizers::Tokenizer;
 
-use crate::error::{AiError, AiResult};
 use crate::embedding::EmbeddingProvider;
+use crate::error::{AiError, AiResult};
 use crate::vector::EMBEDDING_DIMENSIONS;
 
 /// Neural embedding provider backed by the all-MiniLM-L6-v2 ONNX model.
@@ -26,12 +26,16 @@ use crate::vector::EMBEDDING_DIMENSIONS;
 /// Implements the `EmbeddingProvider` trait for real semantic inference.
 /// The model and tokenizer are loaded once and shared via `Arc`, making
 /// cloning cheap for caching across daemon requests.
+///
+/// The `Mutex` around `Session` is required because `ort` 2.x's
+/// `Session::run()` takes `&mut self`. The mutex is uncontended in
+/// single-threaded CLI usage and briefly held during inference.
 pub struct MiniLmEmbeddingProvider {
-    session: Arc<Session>,
+    session: Arc<Mutex<Session>>,
     tokenizer: Arc<Tokenizer>,
 }
 
-// Manual Clone because Arc<Session>/Arc<Tokenizer> are cheap to clone.
+// Manual Clone because Arc<Mutex<Session>>/Arc<Tokenizer> are cheap to clone.
 impl Clone for MiniLmEmbeddingProvider {
     fn clone(&self) -> Self {
         Self {
@@ -79,7 +83,7 @@ impl MiniLmEmbeddingProvider {
             .map_err(|e| AiError::TokenizerError(format!("load tokenizer: {e}")))?;
 
         Ok(Self {
-            session: Arc::new(session),
+            session: Arc::new(Mutex::new(session)),
             tokenizer: Arc::new(tokenizer),
         })
     }
@@ -112,44 +116,47 @@ impl MiniLmEmbeddingProvider {
 
         let seq_len = input_ids.len();
 
-        let ids_array = Array2::from_shape_vec((1, seq_len), input_ids)
-            .map_err(|e| AiError::EmbeddingFailed(format!("shape input_ids: {e}")))?;
-        let mask_array = Array2::from_shape_vec((1, seq_len), attention_mask.clone())
-            .map_err(|e| AiError::EmbeddingFailed(format!("shape attention_mask: {e}")))?;
-        let type_array = Array2::from_shape_vec((1, seq_len), token_type_ids)
-            .map_err(|e| AiError::EmbeddingFailed(format!("shape token_type_ids: {e}")))?;
+        // Build ort Tensor values from flat vectors + shapes.
+        let ids_tensor = Tensor::from_array(([1usize, seq_len], input_ids))
+            .map_err(|e| AiError::OnnxError(format!("create input_ids tensor: {e}")))?;
+        let mask_tensor = Tensor::from_array(([1usize, seq_len], attention_mask.clone()))
+            .map_err(|e| AiError::OnnxError(format!("create attention_mask tensor: {e}")))?;
+        let type_tensor = Tensor::from_array(([1usize, seq_len], token_type_ids))
+            .map_err(|e| AiError::OnnxError(format!("create token_type_ids tensor: {e}")))?;
 
-        // 2. Run ONNX inference.
-        let outputs = self
+        // 2. Run ONNX inference (needs &mut self on Session).
+        let mut session = self
             .session
-            .run(ort::inputs![ids_array, mask_array, type_array].map_err(|e| {
-                AiError::OnnxError(format!("prepare inputs: {e}"))
-            })?)
+            .lock()
+            .map_err(|e| AiError::OnnxError(format!("session lock poisoned: {e}")))?;
+
+        let outputs = session
+            .run(ort::inputs![ids_tensor, mask_tensor, type_tensor])
             .map_err(|e| AiError::OnnxError(format!("run inference: {e}")))?;
 
         // 3. Extract last_hidden_state [1, seq_len, hidden_size].
-        let output_tensor = outputs[0]
+        let (shape, data) = outputs[0]
             .try_extract_tensor::<f32>()
             .map_err(|e| AiError::OnnxError(format!("extract output: {e}")))?;
 
-        let view = output_tensor.view();
-        let shape = view.shape();
         if shape.len() != 3 {
             return Err(AiError::EmbeddingFailed(format!(
                 "unexpected output shape: {shape:?}, expected [1, seq_len, hidden_size]"
             )));
         }
-        let hidden_size = shape[2];
+        let hidden_size = shape[2] as usize;
 
         // 4. Mean pooling with attention mask.
+        // data is a flat [1 * seq_len * hidden_size] slice.
         let mut pooled = vec![0.0f32; hidden_size];
         let mut mask_sum = 0.0f32;
 
         for t in 0..seq_len {
             let mask_val = attention_mask[t] as f32;
             mask_sum += mask_val;
+            let offset = t * hidden_size;
             for h in 0..hidden_size {
-                pooled[h] += view[[0, t, h]] * mask_val;
+                pooled[h] += data[offset + h] * mask_val;
             }
         }
 

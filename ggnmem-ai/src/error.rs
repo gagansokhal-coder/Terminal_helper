@@ -15,6 +15,9 @@ pub enum AiError {
     #[error("model already installed: {0}")]
     ModelAlreadyInstalled(String),
 
+    #[error("model needs upgrade (marker-only install, no ONNX files): {0}")]
+    ModelNeedsUpgrade(String),
+
     #[error("unknown model: {0}")]
     UnknownModel(String),
 
