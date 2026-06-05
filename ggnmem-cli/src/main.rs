@@ -717,6 +717,7 @@ async fn search(args: &[String]) -> Result<()> {
     let json_output = has_flag(args, "--json");
     let recent_only = has_flag(args, "--recent");
     let use_cwd = has_flag(args, "--cwd");
+    let debug = has_flag(args, "--debug");
 
     // Resolve current working directory for --cwd boosting.
     let cwd = if use_cwd {
@@ -729,7 +730,7 @@ async fn search(args: &[String]) -> Result<()> {
 
     // Build query from positional args (skip "ggnmem", "search", and any --flag/value pairs).
     let valued_flags = ["--limit"];
-    let boolean_flags = ["--json", "--cwd", "--recent"];
+    let boolean_flags = ["--json", "--cwd", "--recent", "--debug"];
 
     let mut query_parts: Vec<&str> = Vec::new();
     let mut skip_next = false;
@@ -750,33 +751,19 @@ async fn search(args: &[String]) -> Result<()> {
 
     let query = query_parts.join(" ");
     if query.is_empty() {
-        bail!("usage: ggnmem search <query> [--limit N] [--cwd] [--recent] [--json]");
+        bail!("usage: ggnmem search <query> [--limit N] [--cwd] [--recent] [--json] [--debug]");
     }
 
-    // Check AI config to decide between hybrid and plain FTS search.
-    let cfg = config::load().ok();
-    let ai_enabled = cfg
-        .as_ref()
-        .map(|c| c.ai.ai_enabled && c.ai.semantic_search)
-        .unwrap_or(false);
-
-    let response = if ai_enabled {
-        request(DaemonRequest::search_commands_hybrid(
-            &query,
-            limit,
-            cwd,
-            recent_only,
-        ))
-        .await?
-    } else {
-        request(DaemonRequest::search_commands_with_options(
-            &query,
-            limit,
-            cwd,
-            recent_only,
-        ))
-        .await?
-    };
+    // Unified search: daemon auto-detects hybrid (FTS + semantic) when embeddings exist.
+    let start = std::time::Instant::now();
+    let response = request(DaemonRequest::search_commands_with_options(
+        &query,
+        limit,
+        cwd,
+        recent_only,
+    ))
+    .await?;
+    let elapsed_ms = start.elapsed().as_millis();
 
     match response.kind {
         DaemonResponseKind::SearchResults { results } => {
@@ -792,11 +779,32 @@ async fn search(args: &[String]) -> Result<()> {
                 return Ok(());
             }
 
-            println!(
-                "found {} result{} for: {query}",
-                results.len(),
-                if results.len() == 1 { "" } else { "s" }
-            );
+            // Count results by source for debug header.
+            if debug {
+                let fts_count = results
+                    .iter()
+                    .filter(|r| r.source == ggnmem_daemon::SearchSource::Fts)
+                    .count();
+                let sem_count = results
+                    .iter()
+                    .filter(|r| r.source == ggnmem_daemon::SearchSource::Semantic)
+                    .count();
+                let hyb_count = results
+                    .iter()
+                    .filter(|r| r.source == ggnmem_daemon::SearchSource::Hybrid)
+                    .count();
+                println!(
+                    "found {} result{} for: {query}  (FTS:{fts_count} SEM:{sem_count} HYB:{hyb_count}  {elapsed_ms}ms)",
+                    results.len(),
+                    if results.len() == 1 { "" } else { "s" }
+                );
+            } else {
+                println!(
+                    "found {} result{} for: {query}",
+                    results.len(),
+                    if results.len() == 1 { "" } else { "s" }
+                );
+            }
             println!();
 
             for result in &results {
@@ -815,8 +823,14 @@ async fn search(args: &[String]) -> Result<()> {
                 let match_tag = format_match_kind(&result.match_kind);
                 let score_pct = (result.score * 100.0) as u32;
 
+                let source_tag = if debug {
+                    format!(" [{}]", result.source)
+                } else {
+                    String::new()
+                };
+
                 println!(
-                    "  {exit_str} {ts}  {dur:>7}  [{match_tag:>7} {score_pct:>3}%]  {cwd}",
+                    "  {exit_str} {ts}  {dur:>7}  [{match_tag:>7} {score_pct:>3}%]{source_tag}  {cwd}",
                     cwd = result.cwd
                 );
                 println!("       $ {cmd}", cmd = result.command);
@@ -962,6 +976,9 @@ async fn stats() -> Result<()> {
     println!("  total commands:   {}", usage.total_commands);
     println!("  unique commands:  {}", usage.unique_commands);
     println!("  searches:         {}", usage.searches_performed);
+    println!("  hybrid searches:  {}", usage.hybrid_searches);
+    println!("  semantic srches:  {}", usage.semantic_searches);
+    println!("  avg search lat:   {}ms", usage.avg_search_latency_ms);
     println!("  deduplicated:     {}", usage.deduplicated_commands);
     println!("  total sessions:   {}", usage.total_sessions);
     println!();
@@ -1241,7 +1258,11 @@ fn ai_install(args: &[String]) -> Result<()> {
     match mgr.install(model_name, |downloaded, total| {
         if total > 0 {
             let pct = (downloaded * 100) / total;
-            eprint!("\r  downloading: {} / {} ({pct}%)", format_bytes(downloaded), format_bytes(total));
+            eprint!(
+                "\r  downloading: {} / {} ({pct}%)",
+                format_bytes(downloaded),
+                format_bytes(total)
+            );
         } else {
             eprint!("\r  downloading: {}", format_bytes(downloaded));
         }
@@ -1249,7 +1270,10 @@ fn ai_install(args: &[String]) -> Result<()> {
         Ok(info) => {
             eprintln!(); // newline after progress
             if upgrading {
-                println!("  \u{2713} model '{}' upgraded to real ONNX files", info.name);
+                println!(
+                    "  \u{2713} model '{}' upgraded to real ONNX files",
+                    info.name
+                );
             } else {
                 println!("  \u{2713} model '{}' installed", info.name);
             }
@@ -1259,7 +1283,14 @@ fn ai_install(args: &[String]) -> Result<()> {
             println!("  size: {}", format_bytes(info.disk_size_bytes));
 
             // Verify integrity.
-            let mgr2 = ggnmem_ai::ModelManager::new(info.install_path.as_ref().unwrap().parent().unwrap().to_path_buf());
+            let mgr2 = ggnmem_ai::ModelManager::new(
+                info.install_path
+                    .as_ref()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .to_path_buf(),
+            );
             match mgr2.verify_integrity(model_name) {
                 Ok(()) => println!("  \u{2713} integrity verified"),
                 Err(e) => eprintln!("  \u{26a0} integrity warning: {e}"),
@@ -1290,7 +1321,6 @@ fn ai_install(args: &[String]) -> Result<()> {
 /// Prints success/failure but does NOT fail the install if verification fails
 /// (the files are already downloaded and verified by checksum).
 fn verify_model_loads(models_dir: &std::path::Path, model_name: &str) {
-
     print!("  verifying model loads through ONNX Runtime... ");
 
     let (provider, provider_name) = ggnmem_ai::create_provider(models_dir, model_name);
@@ -1307,7 +1337,11 @@ fn verify_model_loads(models_dir: &std::path::Path, model_name: &str) {
         Ok(embedding) => {
             let dims = embedding.len();
             let magnitude: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
-            let sample: Vec<String> = embedding.iter().take(4).map(|v| format!("{v:.4}")).collect();
+            let sample: Vec<String> = embedding
+                .iter()
+                .take(4)
+                .map(|v| format!("{v:.4}"))
+                .collect();
 
             println!("\u{2713}");
             println!("  \u{2713} produced {dims}-dimensional embedding via {provider_name}");
@@ -1417,7 +1451,8 @@ fn ai_reindex() -> Result<()> {
         );
     }
 
-    let (provider, provider_name) = ggnmem_ai::create_provider(&ai_cfg.models_dir, &ai_cfg.model_name);
+    let (provider, provider_name) =
+        ggnmem_ai::create_provider(&ai_cfg.models_dir, &ai_cfg.model_name);
     let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path);
     let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store);
 
@@ -1490,7 +1525,8 @@ async fn semantic(args: &[String]) -> Result<()> {
         );
     }
 
-    let (provider, provider_name) = ggnmem_ai::create_provider(&ai_cfg.models_dir, &ai_cfg.model_name);
+    let (provider, provider_name) =
+        ggnmem_ai::create_provider(&ai_cfg.models_dir, &ai_cfg.model_name);
     let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path);
     let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store);
 

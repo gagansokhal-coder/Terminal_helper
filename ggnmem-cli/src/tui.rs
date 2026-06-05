@@ -23,7 +23,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ggnmem_daemon::{
-    protocol::{DaemonRequest, DaemonResponseKind, SearchResultSummary},
+    protocol::{DaemonRequest, DaemonResponseKind, SearchResultSummary, SearchSource},
     DaemonConfig, IpcClient,
 };
 use ratatui::{
@@ -222,6 +222,16 @@ impl App {
             if hidden > 0 {
                 parts.push(format!("{hidden} internal hidden"));
             }
+        }
+
+        // Show AI source breakdown when semantic/hybrid results exist.
+        let ai_count = self
+            .results
+            .iter()
+            .filter(|r| r.source != SearchSource::Fts)
+            .count();
+        if ai_count > 0 {
+            parts.push(format!("🧠 {ai_count} AI"));
         }
 
         self.status_msg = parts.join("  │  ");
@@ -639,6 +649,7 @@ fn result_to_list_item<'a>(
     };
 
     let match_badge = match_kind_span(&result.match_kind);
+    let source_badge = source_kind_span(&result.source);
     let cmd_spans = highlight_command(&result.command, query);
 
     let mut line1 = vec![
@@ -646,6 +657,7 @@ fn result_to_list_item<'a>(
         exit_span,
         pin_span,
         match_badge,
+        source_badge,
         Span::styled(
             format!("{score_pct:>3}% "),
             Style::default().fg(score_color),
@@ -719,6 +731,14 @@ fn match_kind_span(kind: &ggnmem_db::MatchKind) -> Span<'static> {
                 .fg(ACCENT_ORANGE)
                 .add_modifier(Modifier::ITALIC),
         ),
+    }
+}
+
+fn source_kind_span(source: &SearchSource) -> Span<'static> {
+    match source {
+        SearchSource::Fts => Span::raw(""),
+        SearchSource::Semantic => Span::styled("🧠", Style::default().fg(ACCENT_PURPLE)),
+        SearchSource::Hybrid => Span::styled("⚡", Style::default().fg(ACCENT_YELLOW)),
     }
 }
 
@@ -984,6 +1004,7 @@ async fn do_search(query: &str, cwd: Option<String>) -> Result<Vec<SearchResultS
                 run_count: 1,
                 match_kind: ggnmem_db::MatchKind::Exact,
                 score: 1.0,
+                source: SearchSource::Fts,
             })
             .collect()),
         DaemonResponseKind::Error { code, message } => anyhow::bail!("{code}: {message}"),
