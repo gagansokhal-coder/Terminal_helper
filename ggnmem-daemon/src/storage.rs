@@ -100,31 +100,173 @@ pub async fn search_commands(
     recent_only: bool,
 ) -> DaemonResult<Vec<crate::protocol::SearchResultSummary>> {
     let results = tokio::task::spawn_blocking(move || {
-        let database = Database::open(&DatabaseConfig::new(database_path))?;
-        let mut opts = ggnmem_db::SearchOptions::new(&query).with_limit(limit);
-        if let Some(c) = cwd {
-            opts = opts.with_cwd(c);
+        use crate::protocol::{SearchSource, FTS_WEIGHT, RRF_K, SEMANTIC_WEIGHT};
+        use std::collections::HashMap;
+        use std::time::Instant;
+
+        let start = Instant::now();
+
+        // 1. FTS search (always runs).
+        let database = Database::open(&DatabaseConfig::new(database_path.clone()))?;
+        let mut opts = ggnmem_db::SearchOptions::new(&query).with_limit(limit * 2);
+        if let Some(ref c) = cwd {
+            opts = opts.with_cwd(c.clone());
         }
         opts = opts.with_recent_only(recent_only);
-        let results = database.search_commands_v2(&opts)?;
-        database.record_search_performed()?;
-        let summaries: Vec<crate::protocol::SearchResultSummary> = results
-            .into_iter()
-            .map(|r| crate::protocol::SearchResultSummary {
-                command: r.command,
-                cwd: r.cwd,
+        let fts_results = database.search_commands_v2(&opts)?;
+
+        // 2. Attempt semantic search (auto-detect: skip if no embeddings).
+        let ai_cfg = default_ai_config();
+        let provider = cached_provider();
+        let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path);
+        let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store);
+
+        let semantic_matches = pipeline
+            .search_embedding(&query, (limit * 2) as usize)
+            .unwrap_or_default();
+
+        // If no semantic results, return FTS-only with SearchSource::Fts.
+        if semantic_matches.is_empty() {
+            let elapsed_ms = start.elapsed().as_millis() as u64;
+            // Record search metrics (best-effort).
+            let _ = database.record_search_performed();
+            let _ = database.record_search_latency(elapsed_ms, false);
+
+            let summaries: Vec<crate::protocol::SearchResultSummary> = fts_results
+                .into_iter()
+                .take(limit as usize)
+                .map(|r| crate::protocol::SearchResultSummary {
+                    command: r.command,
+                    cwd: r.cwd,
+                    exit_code: r.exit_code,
+                    duration_ms: r.duration_ms,
+                    completed_at_ms: r.completed_at_ms,
+                    run_count: r.run_count,
+                    match_kind: r.match_kind,
+                    score: r.score,
+                    source: SearchSource::Fts,
+                })
+                .collect();
+            return Ok::<Vec<crate::protocol::SearchResultSummary>, ggnmem_db::DbError>(summaries);
+        }
+
+        // 3. Look up semantic match metadata.
+        let semantic_db = Database::open(&DatabaseConfig::new(database_path))?;
+        let mut semantic_details: Vec<(ggnmem_db::CommandRecord, f32)> = Vec::new();
+        for m in &semantic_matches {
+            if let Ok(Some(cmd)) = semantic_db.get_command_by_id(&m.id) {
+                semantic_details.push((cmd, m.distance));
+            }
+        }
+
+        // 4. RRF merge with source tracking.
+        struct RrfEntry {
+            command: String,
+            cwd: String,
+            exit_code: Option<i32>,
+            duration_ms: Option<i64>,
+            completed_at_ms: i64,
+            run_count: u64,
+            match_kind: ggnmem_db::MatchKind,
+            rrf_score: f64,
+            in_fts: bool,
+            in_semantic: bool,
+        }
+
+        let mut merged: HashMap<(String, String), RrfEntry> = HashMap::new();
+
+        // Add FTS results with RRF scoring.
+        for (rank, r) in fts_results.iter().enumerate() {
+            let key = (r.command.clone(), r.cwd.clone());
+            let rrf = FTS_WEIGHT as f64 / (RRF_K as f64 + rank as f64 + 1.0);
+            let entry = merged.entry(key).or_insert_with(|| RrfEntry {
+                command: r.command.clone(),
+                cwd: r.cwd.clone(),
                 exit_code: r.exit_code,
                 duration_ms: r.duration_ms,
                 completed_at_ms: r.completed_at_ms,
                 run_count: r.run_count,
                 match_kind: r.match_kind,
-                score: r.score,
+                rrf_score: 0.0,
+                in_fts: false,
+                in_semantic: false,
+            });
+            entry.rrf_score += rrf;
+            entry.in_fts = true;
+        }
+
+        // Add semantic results with RRF scoring.
+        for (rank, (cmd, _distance)) in semantic_details.iter().enumerate() {
+            let key = (cmd.command.clone(), cmd.cwd.clone());
+            let rrf = SEMANTIC_WEIGHT as f64 / (RRF_K as f64 + rank as f64 + 1.0);
+            let entry = merged.entry(key).or_insert_with(|| RrfEntry {
+                command: cmd.command.clone(),
+                cwd: cmd.cwd.clone(),
+                exit_code: cmd.exit_code,
+                duration_ms: cmd.duration_ms,
+                completed_at_ms: cmd.completed_at_ms,
+                run_count: 1,
+                match_kind: ggnmem_db::MatchKind::Partial,
+                rrf_score: 0.0,
+                in_fts: false,
+                in_semantic: false,
+            });
+            entry.rrf_score += rrf;
+            entry.in_semantic = true;
+        }
+
+        // Sort by RRF score descending.
+        let mut sorted: Vec<RrfEntry> = merged.into_values().collect();
+        sorted.sort_by(|a, b| {
+            b.rrf_score
+                .partial_cmp(&a.rrf_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        sorted.truncate(limit as usize);
+
+        // Normalize scores to [0.0, 1.0].
+        let max_score = sorted.first().map(|e| e.rrf_score).unwrap_or(1.0);
+
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        // Record search metrics (best-effort).
+        let _ = database.record_search_performed();
+        let _ = database.record_search_latency(elapsed_ms, true);
+
+        let summaries: Vec<crate::protocol::SearchResultSummary> = sorted
+            .into_iter()
+            .map(|e| {
+                let source = match (e.in_fts, e.in_semantic) {
+                    (true, true) => SearchSource::Hybrid,
+                    (false, true) => SearchSource::Semantic,
+                    _ => SearchSource::Fts,
+                };
+                crate::protocol::SearchResultSummary {
+                    command: e.command,
+                    cwd: e.cwd,
+                    exit_code: e.exit_code,
+                    duration_ms: e.duration_ms,
+                    completed_at_ms: e.completed_at_ms,
+                    run_count: e.run_count,
+                    match_kind: e.match_kind,
+                    score: if max_score > 0.0 {
+                        e.rrf_score / max_score
+                    } else {
+                        0.0
+                    },
+                    source,
+                }
             })
             .collect();
+
         Ok::<Vec<crate::protocol::SearchResultSummary>, ggnmem_db::DbError>(summaries)
     })
     .await??;
     Ok(results)
+}
+
+/// Build a default `AiConfig` from XDG paths.
+fn default_ai_config() -> ggnmem_ai::AiConfig {
+    ggnmem_ai::AiConfig::default()
 }
 
 pub async fn cleanup_commands(
@@ -180,7 +322,7 @@ pub async fn run_retention_cleanup(
     Ok(stats)
 }
 
-// ─── Phase 12B/C: Semantic + Hybrid Search ───────────────────────────────────
+// ─── Phase 12B/C: Semantic Search (power-user command) ───────────────────────
 
 /// Get or create an embedding provider, caching the ONNX model in a process-
 /// level static so the expensive model load (~2s) happens only once.
@@ -211,6 +353,7 @@ fn cached_provider() -> Box<dyn ggnmem_ai::EmbeddingProvider> {
 
 /// Pure semantic search: embed query, search vector store, cross-reference
 /// with the commands database for metadata.
+/// Used by `ggnmem semantic <query>` (power-user/debug command).
 pub async fn semantic_search(
     database_path: PathBuf,
     query: String,
@@ -244,163 +387,13 @@ pub async fn semantic_search(
         }
 
         summaries.truncate(limit as usize);
+
+        // Record semantic search metrics (best-effort).
+        let _ = database.record_search_performed();
+        let _ = database.record_semantic_search();
+
         Ok::<Vec<crate::protocol::SemanticResultSummary>, ggnmem_ai::AiError>(summaries)
     })
     .await??;
     Ok(results)
-}
-
-/// Hybrid search: run FTS search and semantic search, then merge via RRF.
-///
-/// Reciprocal Rank Fusion formula:
-///   `score_i = Σ weight_j / (k + rank_ij)` for each ranking list j.
-///
-/// This produces a unified ranking that benefits from both lexical
-/// (FTS/fuzzy) and semantic (embedding) signals.
-pub async fn hybrid_search_commands(
-    database_path: PathBuf,
-    query: String,
-    limit: u32,
-    cwd: Option<String>,
-    recent_only: bool,
-) -> DaemonResult<Vec<crate::protocol::SearchResultSummary>> {
-    let results = tokio::task::spawn_blocking(move || {
-        use crate::protocol::{FTS_WEIGHT, RRF_K, SEMANTIC_WEIGHT};
-        use std::collections::HashMap;
-
-        // 1. FTS search (existing).
-        let database = Database::open(&DatabaseConfig::new(database_path.clone()))?;
-        let mut opts = ggnmem_db::SearchOptions::new(&query).with_limit(limit * 2);
-        if let Some(ref c) = cwd {
-            opts = opts.with_cwd(c.clone());
-        }
-        opts = opts.with_recent_only(recent_only);
-        let fts_results = database.search_commands_v2(&opts)?;
-        database.record_search_performed()?;
-
-        // 2. Semantic search.
-        let ai_cfg = default_ai_config();
-        let provider = cached_provider();
-        let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path);
-        let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store);
-
-        let semantic_matches = pipeline
-            .search_embedding(&query, (limit * 2) as usize)
-            .unwrap_or_default();
-
-        // If no semantic results, return FTS only.
-        if semantic_matches.is_empty() {
-            let summaries: Vec<crate::protocol::SearchResultSummary> = fts_results
-                .into_iter()
-                .take(limit as usize)
-                .map(|r| crate::protocol::SearchResultSummary {
-                    command: r.command,
-                    cwd: r.cwd,
-                    exit_code: r.exit_code,
-                    duration_ms: r.duration_ms,
-                    completed_at_ms: r.completed_at_ms,
-                    run_count: r.run_count,
-                    match_kind: r.match_kind,
-                    score: r.score,
-                })
-                .collect();
-            return Ok::<Vec<crate::protocol::SearchResultSummary>, ggnmem_db::DbError>(summaries);
-        }
-
-        // 3. Look up semantic match metadata.
-        let semantic_db = Database::open(&DatabaseConfig::new(database_path))?;
-        let mut semantic_details: Vec<(ggnmem_db::CommandRecord, f32)> = Vec::new();
-        for m in &semantic_matches {
-            if let Ok(Some(cmd)) = semantic_db.get_command_by_id(&m.id) {
-                semantic_details.push((cmd, m.distance));
-            }
-        }
-
-        // 4. RRF merge.
-        // Key: (command, cwd) pair to identify unique results.
-        struct RrfEntry {
-            command: String,
-            cwd: String,
-            exit_code: Option<i32>,
-            duration_ms: Option<i64>,
-            completed_at_ms: i64,
-            run_count: u64,
-            match_kind: ggnmem_db::MatchKind,
-            rrf_score: f64,
-        }
-
-        let mut merged: HashMap<(String, String), RrfEntry> = HashMap::new();
-
-        // Add FTS results with RRF scoring.
-        for (rank, r) in fts_results.iter().enumerate() {
-            let key = (r.command.clone(), r.cwd.clone());
-            let rrf = FTS_WEIGHT as f64 / (RRF_K as f64 + rank as f64 + 1.0);
-            let entry = merged.entry(key).or_insert_with(|| RrfEntry {
-                command: r.command.clone(),
-                cwd: r.cwd.clone(),
-                exit_code: r.exit_code,
-                duration_ms: r.duration_ms,
-                completed_at_ms: r.completed_at_ms,
-                run_count: r.run_count,
-                match_kind: r.match_kind,
-                rrf_score: 0.0,
-            });
-            entry.rrf_score += rrf;
-        }
-
-        // Add semantic results with RRF scoring.
-        for (rank, (cmd, _distance)) in semantic_details.iter().enumerate() {
-            let key = (cmd.command.clone(), cmd.cwd.clone());
-            let rrf = SEMANTIC_WEIGHT as f64 / (RRF_K as f64 + rank as f64 + 1.0);
-            let entry = merged.entry(key).or_insert_with(|| RrfEntry {
-                command: cmd.command.clone(),
-                cwd: cmd.cwd.clone(),
-                exit_code: cmd.exit_code,
-                duration_ms: cmd.duration_ms,
-                completed_at_ms: cmd.completed_at_ms,
-                run_count: 1,
-                match_kind: ggnmem_db::MatchKind::Partial,
-                rrf_score: 0.0,
-            });
-            entry.rrf_score += rrf;
-        }
-
-        // Sort by RRF score descending.
-        let mut sorted: Vec<RrfEntry> = merged.into_values().collect();
-        sorted.sort_by(|a, b| {
-            b.rrf_score
-                .partial_cmp(&a.rrf_score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        sorted.truncate(limit as usize);
-
-        // Normalize scores to [0.0, 1.0].
-        let max_score = sorted.first().map(|e| e.rrf_score).unwrap_or(1.0);
-        let summaries: Vec<crate::protocol::SearchResultSummary> = sorted
-            .into_iter()
-            .map(|e| crate::protocol::SearchResultSummary {
-                command: e.command,
-                cwd: e.cwd,
-                exit_code: e.exit_code,
-                duration_ms: e.duration_ms,
-                completed_at_ms: e.completed_at_ms,
-                run_count: e.run_count,
-                match_kind: e.match_kind,
-                score: if max_score > 0.0 {
-                    e.rrf_score / max_score
-                } else {
-                    0.0
-                },
-            })
-            .collect();
-
-        Ok::<Vec<crate::protocol::SearchResultSummary>, ggnmem_db::DbError>(summaries)
-    })
-    .await??;
-    Ok(results)
-}
-
-/// Build a default `AiConfig` from XDG paths.
-fn default_ai_config() -> ggnmem_ai::AiConfig {
-    ggnmem_ai::AiConfig::default()
 }

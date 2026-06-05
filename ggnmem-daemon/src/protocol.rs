@@ -46,6 +46,33 @@ pub struct CommandSummary {
     pub session_id: String,
 }
 
+/// Which search engine produced a result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SearchSource {
+    /// Result came from FTS5 keyword/fuzzy search only.
+    Fts,
+    /// Result came from vector/semantic search only.
+    Semantic,
+    /// Result appeared in both FTS and semantic lists, merged by RRF.
+    Hybrid,
+}
+
+impl Default for SearchSource {
+    fn default() -> Self {
+        Self::Fts
+    }
+}
+
+impl std::fmt::Display for SearchSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Fts => write!(f, "FTS"),
+            Self::Semantic => write!(f, "SEM"),
+            Self::Hybrid => write!(f, "HYB"),
+        }
+    }
+}
+
 /// A single search result returned over IPC.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SearchResultSummary {
@@ -58,6 +85,9 @@ pub struct SearchResultSummary {
     pub match_kind: MatchKind,
     /// Composite score in [0.0, 1.0].
     pub score: f64,
+    /// Which search engine produced this result.
+    #[serde(default)]
+    pub source: SearchSource,
 }
 
 /// A single semantic search result returned over IPC.
@@ -103,9 +133,6 @@ pub enum DaemonRequest {
         cwd: Option<String>,
         /// Sort by recency only, ignoring scoring weights.
         recent_only: bool,
-        /// Whether to apply semantic reranking (hybrid search).
-        #[serde(default)]
-        ai_enabled: bool,
     },
     CleanupCommands {
         version: ProtocolVersion,
@@ -172,7 +199,6 @@ impl DaemonRequest {
             limit,
             cwd: None,
             recent_only: false,
-            ai_enabled: false,
         }
     }
 
@@ -189,25 +215,6 @@ impl DaemonRequest {
             limit,
             cwd,
             recent_only,
-            ai_enabled: false,
-        }
-    }
-
-    /// Build a search request with AI-enabled hybrid mode.
-    #[must_use]
-    pub fn search_commands_hybrid(
-        query: impl Into<String>,
-        limit: u32,
-        cwd: Option<String>,
-        recent_only: bool,
-    ) -> Self {
-        Self::SearchCommands {
-            version: PROTOCOL_VERSION,
-            query: query.into(),
-            limit,
-            cwd,
-            recent_only,
-            ai_enabled: true,
         }
     }
 
