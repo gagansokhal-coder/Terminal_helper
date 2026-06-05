@@ -821,8 +821,7 @@ impl Database {
         let (last_cleanup_at_ms, last_cleanup_removed, last_cleanup_remaining) =
             self.cleanup_history()?;
         let last_optimize_at_ms = self.get_last_optimize_at_ms()?;
-        let (hybrid_searches, semantic_searches, avg_search_latency_ms) =
-            self.search_metrics()?;
+        let (hybrid_searches, semantic_searches, avg_search_latency_ms) = self.search_metrics()?;
 
         Ok(crate::domain::UsageStats {
             total_commands,
@@ -1198,9 +1197,8 @@ impl Database {
 
     /// Read hybrid/semantic search counters and compute average latency.
     fn search_metrics(&self) -> DbResult<(u64, u64, u64)> {
-        let (hybrid, semantic, total_latency, total_searches): (i64, i64, i64, i64) = self
-            .connection
-            .query_row(
+        let (hybrid, semantic, total_latency, total_searches): (i64, i64, i64, i64) =
+            self.connection.query_row(
                 r#"
                 SELECT
                     hybrid_searches,
