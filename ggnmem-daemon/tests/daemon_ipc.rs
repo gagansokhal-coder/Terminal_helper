@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-use std::time::Duration;
+use std::{ffi::OsString, time::Duration};
 
 use ggnmem_daemon::{
     platform::IpcEndpoint,
@@ -17,6 +17,7 @@ use tokio::{sync::oneshot, time};
 #[tokio::test]
 async fn daemon_ping_health_queue_and_db_ingestion_work() {
     let temp = TempDir::new().expect("temp dir");
+    let _home_guard = EnvVarGuard::set("HOME", temp.path().as_os_str().to_owned());
     let endpoint = IpcEndpoint::Unix(temp.path().join("runtime").join("daemon.sock"));
     let database_path = temp.path().join("data").join("ggnmem.db");
     let config = DaemonConfig::new(endpoint.clone(), database_path.clone())
@@ -83,6 +84,29 @@ async fn daemon_ping_health_queue_and_db_ingestion_work() {
 
     wait_for_command(&database_path, "git status", "/workspace/ggnmem").await;
 
+    let search = daemon_request(
+        &endpoint,
+        DaemonRequest::search_commands_with_options("git", 5, None, false),
+    )
+    .await
+    .expect("search response");
+    let DaemonResponseKind::SearchResults { results } = search.kind else {
+        panic!("expected search response");
+    };
+    assert!(
+        results.iter().any(|result| result.command == "git status"),
+        "search should return the ingested command"
+    );
+
+    let stats = daemon_request(&endpoint, DaemonRequest::get_stats())
+        .await
+        .expect("stats response");
+    let DaemonResponseKind::StatsResult { stats, .. } = stats.kind else {
+        panic!("expected stats response");
+    };
+    assert_eq!(stats.total_commands, 1);
+    assert_eq!(stats.searches_performed, 1);
+
     shutdown_tx.send(()).expect("shutdown signal");
     time::timeout(Duration::from_secs(5), daemon)
         .await
@@ -128,4 +152,27 @@ async fn daemon_request(
 ) -> ggnmem_daemon::DaemonResult<DaemonResponse> {
     let mut client = IpcClient::connect(endpoint).await?;
     client.request(&request).await
+}
+
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: OsString) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            std::env::set_var(self.key, previous);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
 }

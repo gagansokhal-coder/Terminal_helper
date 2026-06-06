@@ -360,6 +360,9 @@ pub async fn semantic_search(
     limit: u32,
 ) -> DaemonResult<Vec<crate::protocol::SemanticResultSummary>> {
     let results = tokio::task::spawn_blocking(move || {
+        use std::time::Instant;
+
+        let start = Instant::now();
         let ai_cfg = default_ai_config();
         let provider = cached_provider();
         let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path);
@@ -389,7 +392,9 @@ pub async fn semantic_search(
         summaries.truncate(limit as usize);
 
         // Record semantic search metrics (best-effort).
+        let elapsed_ms = start.elapsed().as_millis() as u64;
         let _ = database.record_search_performed();
+        let _ = database.record_search_latency(elapsed_ms, false);
         let _ = database.record_semantic_search();
 
         Ok::<Vec<crate::protocol::SemanticResultSummary>, ggnmem_ai::AiError>(summaries)

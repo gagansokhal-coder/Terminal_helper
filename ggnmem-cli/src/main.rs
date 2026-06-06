@@ -976,11 +976,16 @@ async fn stats() -> Result<()> {
     println!("  total commands:   {}", usage.total_commands);
     println!("  unique commands:  {}", usage.unique_commands);
     println!("  searches:         {}", usage.searches_performed);
-    println!("  hybrid searches:  {}", usage.hybrid_searches);
-    println!("  semantic srches:  {}", usage.semantic_searches);
-    println!("  avg search lat:   {}ms", usage.avg_search_latency_ms);
     println!("  deduplicated:     {}", usage.deduplicated_commands);
     println!("  total sessions:   {}", usage.total_sessions);
+    println!();
+    println!("search metrics:");
+    println!("  Hybrid Searches:        {}", usage.hybrid_searches);
+    println!("  Semantic Searches:      {}", usage.semantic_searches);
+    println!(
+        "  Average Search Latency: {}ms",
+        usage.avg_search_latency_ms
+    );
     println!();
     println!("database:");
     println!(
@@ -1629,11 +1634,52 @@ fn default_db_path() -> PathBuf {
 
 async fn request(request: DaemonRequest) -> Result<DaemonResponse> {
     let config = DaemonConfig::load().context("load daemon client configuration")?;
+    if request_needs_protocol_preflight(&request) {
+        ensure_daemon_protocol(&config).await?;
+    }
+
     let mut client = IpcClient::connect(&config.endpoint)
         .await
         .context("connect to ggnmem daemon")?;
-    client
+    let response: DaemonResponse = client
         .request(&request)
         .await
-        .context("daemon request failed")
+        .context("daemon request failed")?;
+    ensure_response_protocol(response)
+}
+
+fn request_needs_protocol_preflight(request: &DaemonRequest) -> bool {
+    matches!(
+        request,
+        DaemonRequest::SearchCommands { .. }
+            | DaemonRequest::GetDbStats { .. }
+            | DaemonRequest::GetStats { .. }
+    )
+}
+
+async fn ensure_daemon_protocol(config: &DaemonConfig) -> Result<()> {
+    let mut client = IpcClient::connect(&config.endpoint)
+        .await
+        .context("connect to ggnmem daemon")?;
+    let response: DaemonResponse = client
+        .request(&DaemonRequest::ping())
+        .await
+        .context("daemon protocol check failed")?;
+    let response = ensure_response_protocol(response)?;
+    match response.kind {
+        DaemonResponseKind::Pong => Ok(()),
+        DaemonResponseKind::Error { code, message } => bail!("{code}: {message}"),
+        other => bail!("unexpected daemon protocol check response: {other:?}"),
+    }
+}
+
+fn ensure_response_protocol(response: DaemonResponse) -> Result<DaemonResponse> {
+    if response.version != PROTOCOL_VERSION {
+        bail!(
+            "daemon protocol mismatch: CLI uses IPC protocol v{}, daemon uses v{}. Restart the daemon and CLI from the same build.",
+            PROTOCOL_VERSION,
+            response.version
+        );
+    }
+    Ok(response)
 }

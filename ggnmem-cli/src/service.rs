@@ -46,7 +46,18 @@ fn socket_path() -> Option<PathBuf> {
 }
 
 fn daemon_binary() -> String {
-    // Check ~/.local/bin first, then fall back to PATH.
+    // Prefer the daemon installed beside the currently running CLI. This keeps
+    // bincode IPC structs aligned when multiple ggnmem installs are on PATH.
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(bin_dir) = current_exe.parent() {
+            let sibling = bin_dir.join("ggnmem-daemon");
+            if sibling.exists() {
+                return sibling.to_string_lossy().into_owned();
+            }
+        }
+    }
+
+    // Check ~/.local/bin next, then fall back to PATH.
     if let Ok(home) = home_dir() {
         let local_bin = home.join(".local").join("bin").join("ggnmem-daemon");
         if local_bin.exists() {

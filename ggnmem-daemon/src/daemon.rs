@@ -17,7 +17,7 @@ use crate::{
     error::{DaemonError, DaemonResult},
     health::{HealthState, HealthStatus},
     ipc::{IpcConnection, IpcServer},
-    protocol::{DaemonRequest, DaemonResponse},
+    protocol::{DaemonRequest, DaemonResponse, PROTOCOL_VERSION},
     queue::{IngestionQueue, QueueCommand, QueueItem, QueueWorker},
     retention, storage,
 };
@@ -216,6 +216,19 @@ async fn handle_connection(
     state: Arc<DaemonState>,
 ) -> DaemonResult<()> {
     let request: DaemonRequest = connection.receive().await?;
+    let request_version = request.version();
+    if request_version != PROTOCOL_VERSION {
+        let response = DaemonResponse::error(
+            "protocol_mismatch",
+            format!(
+                "daemon IPC protocol v{PROTOCOL_VERSION} cannot handle request v{request_version}; restart the daemon and CLI from the same build"
+            ),
+        );
+        connection.send(&response).await?;
+        connection.shutdown().await?;
+        return Ok(());
+    }
+
     let response = match request {
         DaemonRequest::Ping { .. } => DaemonResponse::pong(),
         DaemonRequest::Health { .. } => DaemonResponse::health(state.health()),

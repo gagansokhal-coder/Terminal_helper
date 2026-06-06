@@ -1347,6 +1347,33 @@ mod tests {
     }
 
     #[test]
+    fn usage_stats_reports_phase_13_search_metrics() {
+        let temp = NamedTempFile::new().expect("temp db");
+        let database = Database::open(&DatabaseConfig::new(temp.path().to_path_buf()))
+            .expect("database opens");
+
+        database.record_search_performed().expect("search recorded");
+        database
+            .record_search_latency(120, true)
+            .expect("hybrid latency recorded");
+
+        database.record_search_performed().expect("search recorded");
+        database
+            .record_search_latency(80, false)
+            .expect("semantic latency recorded");
+        database
+            .record_semantic_search()
+            .expect("semantic search recorded");
+
+        let stats = database.usage_stats().expect("usage stats");
+
+        assert_eq!(stats.searches_performed, 2);
+        assert_eq!(stats.hybrid_searches, 1);
+        assert_eq!(stats.semantic_searches, 1);
+        assert_eq!(stats.avg_search_latency_ms, 100);
+    }
+
+    #[test]
     fn database_initializes_and_persists_command_contract() {
         let temp = NamedTempFile::new().expect("temp db");
         let database = Database::open(&DatabaseConfig::new(temp.path().to_path_buf()))

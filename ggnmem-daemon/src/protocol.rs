@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::health::HealthStatus;
 
 pub type ProtocolVersion = u16;
-pub const PROTOCOL_VERSION: ProtocolVersion = 1;
+pub const PROTOCOL_VERSION: ProtocolVersion = 2;
 
 /// Weight for FTS results in Reciprocal Rank Fusion hybrid search.
 pub const FTS_WEIGHT: f32 = 0.6;
@@ -155,6 +155,24 @@ pub enum DaemonRequest {
 }
 
 impl DaemonRequest {
+    #[must_use]
+    pub fn version(&self) -> ProtocolVersion {
+        match self {
+            Self::Ping { version }
+            | Self::Health { version }
+            | Self::IngestCommand { version, .. }
+            | Self::Shutdown { version }
+            | Self::QueryRecent { version, .. }
+            | Self::CountCommands { version }
+            | Self::SearchCommands { version, .. }
+            | Self::CleanupCommands { version, .. }
+            | Self::OptimizeDb { version }
+            | Self::GetDbStats { version }
+            | Self::GetStats { version }
+            | Self::SemanticSearch { version, .. } => *version,
+        }
+    }
+
     #[must_use]
     pub fn ping() -> Self {
         Self::Ping {

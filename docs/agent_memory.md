@@ -1882,6 +1882,60 @@ This is O(n) but acceptable for <100K commands. When `sqlite-vec` is pre-loaded 
 
 ---
 
+## Phase 13 - Natural Language Search Metrics Completion
+
+Session: 2026-06-06
+
+### Summary
+
+Completed the remaining Phase 13 metrics work after verification found that `ggnmem stats` did not clearly expose hybrid search count, semantic search count, and average search latency.
+
+### Changes
+
+- Updated `ggnmem stats` to show a dedicated search metrics section:
+  - `Hybrid Searches`
+  - `Semantic Searches`
+  - `Average Search Latency`
+- Fixed standalone `ggnmem semantic <query>` accounting so semantic searches contribute elapsed time to the running average latency.
+- Added a DB regression test proving `UsageStats` reports Phase 13 search metrics from `maintenance_meta`.
+
+### Status
+
+Phase 13 is now fully complete once verification passes with the updated binary.
+
+---
+
+## Phase 13 - Runtime EOF Regression Follow-Up
+
+Session: 2026-06-06
+
+### Root Cause
+
+The runtime EOF regression was caused by mixed installed binaries:
+
+- Shell resolved `ggnmem` from `/home/gagan/.cargo/bin/ggnmem`.
+- `ggnmem restart` started `/home/gagan/.local/bin/ggnmem-daemon`.
+- The two binaries were from different builds, so bincode IPC request frames could not be decoded by the daemon.
+
+This produced daemon log entries like:
+
+```text
+IPC connection failed error=serialization error: io error: unexpected end of file
+```
+
+### Fix
+
+- Updated daemon start/restart resolution to prefer `ggnmem-daemon` beside the currently running CLI binary before falling back to `~/.local/bin`.
+- Rebuilt release binaries and installed matching `ggnmem`/`ggnmem-daemon` pairs into both `/home/gagan/.cargo/bin` and `/home/gagan/.local/bin`.
+- Verified `ggnmem restart` now starts `/home/gagan/.cargo/bin/ggnmem-daemon` when the CLI comes from `/home/gagan/.cargo/bin`.
+
+### Verification
+
+- `ggnmem stats` succeeds and displays Phase 13 search metrics.
+- `ggnmem search git --debug` succeeds and displays FTS/SEM/HYB source counts.
+
+---
+
 # Final Directive
 
 Agents must optimize for:
