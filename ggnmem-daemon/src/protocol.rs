@@ -411,10 +411,7 @@ impl DaemonResponse {
     }
 
     #[must_use]
-    pub fn search_results_with_latency(
-        results: Vec<SearchResultSummary>,
-        latency_ms: u64,
-    ) -> Self {
+    pub fn search_results_with_latency(results: Vec<SearchResultSummary>, latency_ms: u64) -> Self {
         Self {
             version: PROTOCOL_VERSION,
             kind: DaemonResponseKind::SearchResults {

@@ -137,9 +137,9 @@ pub async fn search_commands(
                     source: SearchSource::Fts,
                 })
                 .collect();
-            return Ok::<(Vec<crate::protocol::SearchResultSummary>, u64), ggnmem_db::DbError>(
-                (summaries, elapsed_ms),
-            );
+            return Ok::<(Vec<crate::protocol::SearchResultSummary>, u64), ggnmem_db::DbError>((
+                summaries, elapsed_ms,
+            ));
         }
 
         // ── Semantic-only path ────────────────────────────────────────────
@@ -184,9 +184,9 @@ pub async fn search_commands(
             let _ = database.record_search_latency(elapsed_ms, false);
             let _ = database.record_semantic_search();
 
-            return Ok::<(Vec<crate::protocol::SearchResultSummary>, u64), ggnmem_db::DbError>(
-                (summaries, elapsed_ms),
-            );
+            return Ok::<(Vec<crate::protocol::SearchResultSummary>, u64), ggnmem_db::DbError>((
+                summaries, elapsed_ms,
+            ));
         }
 
         // ── Hybrid path (default): FTS + semantic + RRF merge ────────────
@@ -223,9 +223,9 @@ pub async fn search_commands(
                     source: SearchSource::Fts,
                 })
                 .collect();
-            return Ok::<(Vec<crate::protocol::SearchResultSummary>, u64), ggnmem_db::DbError>(
-                (summaries, elapsed_ms),
-            );
+            return Ok::<(Vec<crate::protocol::SearchResultSummary>, u64), ggnmem_db::DbError>((
+                summaries, elapsed_ms,
+            ));
         }
 
         // 3. Look up semantic match metadata.
@@ -336,9 +336,9 @@ pub async fn search_commands(
             })
             .collect();
 
-        Ok::<(Vec<crate::protocol::SearchResultSummary>, u64), ggnmem_db::DbError>(
-            (summaries, elapsed_ms),
-        )
+        Ok::<(Vec<crate::protocol::SearchResultSummary>, u64), ggnmem_db::DbError>((
+            summaries, elapsed_ms,
+        ))
     })
     .await??;
     Ok(results)

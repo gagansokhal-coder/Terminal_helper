@@ -27,9 +27,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ggnmem_daemon::{
-    protocol::{
-        DaemonRequest, DaemonResponseKind, SearchMode, SearchResultSummary, SearchSource,
-    },
+    protocol::{DaemonRequest, DaemonResponseKind, SearchMode, SearchResultSummary, SearchSource},
     DaemonConfig, IpcClient,
 };
 use ratatui::{
@@ -165,8 +163,7 @@ impl App {
     fn needs_search(&self) -> bool {
         self.search_pending
             && self.last_keystroke.elapsed() >= Duration::from_millis(SEARCH_DEBOUNCE_MS)
-            && (self.query != self.last_search_query
-                || self.search_mode != self.last_search_mode)
+            && (self.query != self.last_search_query || self.search_mode != self.last_search_mode)
     }
 
     fn mark_dirty(&mut self) {
@@ -551,9 +548,7 @@ fn draw_search_input(f: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled(
             format!("[{}] ", app.search_mode),
-            Style::default()
-                .fg(mode_color)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(mode_color).add_modifier(Modifier::BOLD),
         ),
     ];
 
