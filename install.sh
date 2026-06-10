@@ -8,6 +8,11 @@
 #
 # This script installs ggnmem binaries and sets up shell integration.
 # Target: Linux / WSL only.
+#
+# Features:
+#   - Detects existing installations and upgrades in place
+#   - Preserves config and database
+#   - Verifies binaries after install
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
@@ -77,6 +82,21 @@ for dir in "$BIN_DIR" "$CONFIG_DIR" "$DATA_DIR" "$STATE_DIR"; do
     fi
 done
 
+# ─── Detect existing installation ────────────────────────────────────────────
+
+step "Checking for existing installation..."
+
+EXISTING_VERSION=""
+UPGRADE_MODE=false
+
+if [ -f "$BIN_DIR/ggnmem" ]; then
+    EXISTING_VERSION=$("$BIN_DIR/ggnmem" version 2>/dev/null | head -1 || echo "unknown")
+    info "Found existing installation: $EXISTING_VERSION"
+    UPGRADE_MODE=true
+else
+    info "No existing installation found (fresh install)"
+fi
+
 # ─── Find binaries ───────────────────────────────────────────────────────────
 
 step "Looking for binaries..."
@@ -90,12 +110,17 @@ if [ -f "$SCRIPT_DIR/release/ggnmem" ] && [ -f "$SCRIPT_DIR/release/ggnmem-daemo
     CLI_BIN="$SCRIPT_DIR/release/ggnmem"
     DAEMON_BIN="$SCRIPT_DIR/release/ggnmem-daemon"
     info "Found binaries in release/"
-# Priority 2: release/ directory in current directory.
+# Priority 2: same directory as install.sh (extracted tarball).
+elif [ -f "$SCRIPT_DIR/ggnmem" ] && [ -f "$SCRIPT_DIR/ggnmem-daemon" ]; then
+    CLI_BIN="$SCRIPT_DIR/ggnmem"
+    DAEMON_BIN="$SCRIPT_DIR/ggnmem-daemon"
+    info "Found binaries alongside install.sh"
+# Priority 3: release/ directory in current directory.
 elif [ -f "./release/ggnmem" ] && [ -f "./release/ggnmem-daemon" ]; then
     CLI_BIN="./release/ggnmem"
     DAEMON_BIN="./release/ggnmem-daemon"
     info "Found binaries in ./release/"
-# Priority 3: target/release/ (cargo build --release output).
+# Priority 4: target/release/ (cargo build --release output).
 elif [ -f "$SCRIPT_DIR/target/release/ggnmem-cli" ] && [ -f "$SCRIPT_DIR/target/release/ggnmem-daemon" ]; then
     CLI_BIN="$SCRIPT_DIR/target/release/ggnmem-cli"
     DAEMON_BIN="$SCRIPT_DIR/target/release/ggnmem-daemon"
@@ -115,9 +140,36 @@ else
     exit 1
 fi
 
+# ─── Stop daemon if upgrading ────────────────────────────────────────────────
+
+if $UPGRADE_MODE; then
+    step "Stopping daemon for upgrade..."
+
+    # Check if daemon is running.
+    if pgrep -x ggnmem-daemon > /dev/null 2>&1; then
+        "$BIN_DIR/ggnmem" stop 2>/dev/null || kill "$(pgrep -x ggnmem-daemon)" 2>/dev/null || true
+        sleep 1
+        ok "daemon stopped"
+    else
+        ok "daemon not running"
+    fi
+fi
+
 # ─── Install binaries ────────────────────────────────────────────────────────
 
 step "Installing binaries..."
+
+if $UPGRADE_MODE; then
+    # Backup existing binaries.
+    if [ -f "$BIN_DIR/ggnmem" ]; then
+        cp "$BIN_DIR/ggnmem" "$BIN_DIR/ggnmem.old"
+        ok "backed up ggnmem → ggnmem.old"
+    fi
+    if [ -f "$BIN_DIR/ggnmem-daemon" ]; then
+        cp "$BIN_DIR/ggnmem-daemon" "$BIN_DIR/ggnmem-daemon.old"
+        ok "backed up ggnmem-daemon → ggnmem-daemon.old"
+    fi
+fi
 
 cp "$CLI_BIN" "$BIN_DIR/ggnmem"
 chmod +x "$BIN_DIR/ggnmem"
@@ -127,6 +179,39 @@ cp "$DAEMON_BIN" "$BIN_DIR/ggnmem-daemon"
 chmod +x "$BIN_DIR/ggnmem-daemon"
 ok "ggnmem-daemon -> $BIN_DIR/ggnmem-daemon"
 
+# ─── Verify binaries ────────────────────────────────────────────────────────
+
+step "Verifying binaries..."
+
+# Source PATH for this session.
+export PATH="$BIN_DIR:$PATH"
+
+# Verify CLI binary.
+if "$BIN_DIR/ggnmem" version > /dev/null 2>&1; then
+    NEW_VERSION=$("$BIN_DIR/ggnmem" version 2>/dev/null | head -1 || echo "unknown")
+    ok "ggnmem binary verified: $NEW_VERSION"
+else
+    err "ggnmem binary verification failed!"
+    err "The binary may be incompatible with this system."
+    err "Try building from source: cargo build --release"
+    exit 1
+fi
+
+# Verify daemon binary.
+if "$BIN_DIR/ggnmem-daemon" --help > /dev/null 2>&1 || [ -x "$BIN_DIR/ggnmem-daemon" ]; then
+    ok "ggnmem-daemon binary verified"
+else
+    warn "ggnmem-daemon may not be executable — check manually"
+fi
+
+# ─── Upgrade / fresh install messaging ───────────────────────────────────────
+
+if $UPGRADE_MODE; then
+    step "Upgrade status..."
+    info "Previous: $EXISTING_VERSION"
+    info "New:      $NEW_VERSION"
+fi
+
 # ─── Default config ──────────────────────────────────────────────────────────
 
 step "Setting up config..."
@@ -134,7 +219,7 @@ step "Setting up config..."
 CONFIG_FILE="$CONFIG_DIR/config.toml"
 
 if [ -f "$CONFIG_FILE" ]; then
-    ok "config.toml exists (not overwriting)"
+    ok "config.toml exists (preserved — not overwriting)"
 else
     cat > "$CONFIG_FILE" << 'EOF'
 # ggnmem configuration
@@ -172,6 +257,16 @@ semantic_search = false
 model_name = "all-MiniLM-L6-v2"
 EOF
     ok "config.toml created"
+fi
+
+# ─── Preserve database notice ────────────────────────────────────────────────
+
+DB_FILE="$DATA_DIR/ggnmem.db"
+if [ -f "$DB_FILE" ]; then
+    DB_SIZE=$(du -h "$DB_FILE" | cut -f1)
+    ok "database preserved: $DB_FILE ($DB_SIZE)"
+else
+    info "database will be created when daemon starts"
 fi
 
 # ─── PATH ────────────────────────────────────────────────────────────────────
@@ -262,14 +357,11 @@ esac
 
 # ─── Verify ──────────────────────────────────────────────────────────────────
 
-step "Verifying install..."
-
-# Source the PATH update for this session.
-export PATH="$BIN_DIR:$PATH"
+step "Final verification..."
 
 if command -v ggnmem &>/dev/null; then
-    VERSION="$(ggnmem version 2>/dev/null || echo 'unknown')"
-    ok "$VERSION"
+    VERSION="$(ggnmem version 2>/dev/null | head -1 || echo 'unknown')"
+    ok "ggnmem in PATH: $VERSION"
 else
     warn "ggnmem not found in PATH after install"
     warn "You may need to open a new terminal or run:"
@@ -280,7 +372,11 @@ fi
 
 echo ""
 echo -e "${BOLD}═══════════════════════════════════════${RESET}"
-echo -e "${GREEN}${BOLD}  ggnmem installed successfully!${RESET}"
+if $UPGRADE_MODE; then
+    echo -e "${GREEN}${BOLD}  ggnmem upgraded successfully!${RESET}"
+else
+    echo -e "${GREEN}${BOLD}  ggnmem installed successfully!${RESET}"
+fi
 echo -e "${BOLD}═══════════════════════════════════════${RESET}"
 echo ""
 echo "  binaries:  $BIN_DIR/ggnmem"
@@ -288,9 +384,19 @@ echo "             $BIN_DIR/ggnmem-daemon"
 echo "  config:    $CONFIG_FILE"
 echo "  data:      $DATA_DIR/"
 echo ""
-echo "  next steps:"
-echo "    1. Open a new terminal (or: source ~/.${SHELL_NAME}rc)"
-echo "    2. Start the daemon:  ggnmem start"
-echo "    3. Verify:            ggnmem doctor"
-echo "    4. Try it:            Ctrl+R"
+if $UPGRADE_MODE; then
+    echo "  previous:  $EXISTING_VERSION"
+    echo "  current:   $NEW_VERSION"
+    echo ""
+    echo "  next steps:"
+    echo "    1. Restart daemon:    ggnmem restart"
+    echo "    2. Verify:            ggnmem doctor"
+    echo "    3. Check version:     ggnmem version"
+else
+    echo "  next steps:"
+    echo "    1. Open a new terminal (or: source ~/.${SHELL_NAME}rc)"
+    echo "    2. Start the daemon:  ggnmem start"
+    echo "    3. Verify:            ggnmem doctor"
+    echo "    4. Try it:            Ctrl+R"
+fi
 echo ""

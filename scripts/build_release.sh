@@ -10,6 +10,10 @@
 #   - ggnmem-daemon (daemon binary)
 #   - install.sh    (installer)
 #   - README.md     (quick-start docs)
+#   - VERSION       (build metadata)
+#
+# Then bundles everything into:
+#   ggnmem-linux-<arch>.tar.gz
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
@@ -17,11 +21,13 @@ set -euo pipefail
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
+YELLOW='\033[0;33m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
 info()  { echo -e "${CYAN}[info]${RESET}  $*"; }
 ok()    { echo -e "${GREEN}[ok]${RESET}    $*"; }
+warn()  { echo -e "${YELLOW}[warn]${RESET}  $*"; }
 err()   { echo -e "${RED}[error]${RESET} $*"; }
 
 # Find project root (parent of scripts/).
@@ -30,6 +36,30 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 RELEASE_DIR="$PROJECT_ROOT/release"
+
+# ─── Detect architecture ────────────────────────────────────────────────────
+
+ARCH="$(uname -m)"
+case "$ARCH" in
+    x86_64)         ARCH_TAG="x86_64" ;;
+    aarch64|arm64)  ARCH_TAG="aarch64" ;;
+    *)
+        err "Unsupported architecture: $ARCH"
+        exit 1
+        ;;
+esac
+
+info "Architecture: $ARCH_TAG"
+
+# ─── Capture build metadata ──────────────────────────────────────────────────
+
+VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE=$(date +%Y-%m-%d)
+
+info "Version: $VERSION"
+info "Commit: $GIT_COMMIT"
+info "Date: $BUILD_DATE"
 
 # ─── Build ────────────────────────────────────────────────────────────────────
 
@@ -80,6 +110,15 @@ else
     info "strip not found, skipping (binaries will be larger)"
 fi
 
+# Generate VERSION file.
+cat > "$RELEASE_DIR/VERSION" <<EOF
+version=$VERSION
+commit=$GIT_COMMIT
+date=$BUILD_DATE
+arch=$ARCH_TAG
+EOF
+ok "release/VERSION"
+
 # Generate README.
 cat > "$RELEASE_DIR/README.md" << 'EOF'
 # ggnmem — Semantic Terminal Memory
@@ -122,6 +161,20 @@ ggnmem recent
 
 # Check health
 ggnmem doctor
+
+# Show version info
+ggnmem version
+ggnmem version --verbose
+```
+
+## Upgrade
+
+```bash
+# From a new release bundle
+ggnmem upgrade --bundle ./path/to/release
+
+# Or from an extracted tarball
+ggnmem upgrade --bundle ggnmem-linux-x86_64.tar.gz
 ```
 
 ## Uninstall
@@ -147,6 +200,24 @@ MIT OR Apache-2.0
 EOF
 ok "release/README.md"
 
+# ─── Create tarball ──────────────────────────────────────────────────────────
+
+TARBALL_NAME="ggnmem-linux-${ARCH_TAG}.tar.gz"
+TARBALL_PATH="$PROJECT_ROOT/$TARBALL_NAME"
+
+info "Creating release tarball: $TARBALL_NAME"
+
+# Create tarball from the release directory contents.
+# Files are placed at the top level inside the tarball (no enclosing directory).
+tar czf "$TARBALL_PATH" -C "$RELEASE_DIR" \
+    ggnmem \
+    ggnmem-daemon \
+    install.sh \
+    README.md \
+    VERSION
+
+ok "$TARBALL_NAME"
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 
 echo ""
@@ -162,8 +233,22 @@ for f in "$RELEASE_DIR/ggnmem" "$RELEASE_DIR/ggnmem-daemon"; do
     echo "    $(basename "$f"): $SIZE"
 done
 echo ""
+
+# Show tarball size.
+TARBALL_SIZE=$(du -h "$TARBALL_PATH" | cut -f1)
+echo "  Tarball: $TARBALL_NAME ($TARBALL_SIZE)"
+echo ""
+
+echo "  Version:   $VERSION"
+echo "  Commit:    $GIT_COMMIT"
+echo "  Date:      $BUILD_DATE"
+echo "  Arch:      $ARCH_TAG"
+echo ""
 echo "  Release directory: $RELEASE_DIR/"
 echo ""
 echo "  To install:"
 echo "    cd release && bash install.sh"
+echo ""
+echo "  To distribute:"
+echo "    Share $TARBALL_NAME"
 echo ""
