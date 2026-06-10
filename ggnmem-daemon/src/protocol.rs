@@ -13,6 +13,33 @@ pub const SEMANTIC_WEIGHT: f32 = 0.4;
 /// RRF constant `k` — controls the impact of lower-ranked results.
 pub const RRF_K: f32 = 60.0;
 
+/// Which search strategy the caller wants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SearchMode {
+    /// Full hybrid: FTS + semantic + RRF merge.
+    Hybrid,
+    /// FTS5 keyword/fuzzy search only (no embeddings).
+    FtsOnly,
+    /// Semantic/vector search only (no FTS).
+    SemanticOnly,
+}
+
+impl Default for SearchMode {
+    fn default() -> Self {
+        Self::Hybrid
+    }
+}
+
+impl std::fmt::Display for SearchMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Hybrid => write!(f, "HYBRID"),
+            Self::FtsOnly => write!(f, "FTS"),
+            Self::SemanticOnly => write!(f, "SEMANTIC"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionPayload {
     pub session_id: String,
@@ -133,6 +160,9 @@ pub enum DaemonRequest {
         cwd: Option<String>,
         /// Sort by recency only, ignoring scoring weights.
         recent_only: bool,
+        /// Which search strategy to use (Hybrid, FtsOnly, SemanticOnly).
+        #[serde(default)]
+        search_mode: SearchMode,
     },
     CleanupCommands {
         version: ProtocolVersion,
@@ -217,6 +247,7 @@ impl DaemonRequest {
             limit,
             cwd: None,
             recent_only: false,
+            search_mode: SearchMode::Hybrid,
         }
     }
 
@@ -233,6 +264,25 @@ impl DaemonRequest {
             limit,
             cwd,
             recent_only,
+            search_mode: SearchMode::Hybrid,
+        }
+    }
+
+    #[must_use]
+    pub fn search_commands_with_mode(
+        query: impl Into<String>,
+        limit: u32,
+        cwd: Option<String>,
+        recent_only: bool,
+        search_mode: SearchMode,
+    ) -> Self {
+        Self::SearchCommands {
+            version: PROTOCOL_VERSION,
+            query: query.into(),
+            limit,
+            cwd,
+            recent_only,
+            search_mode,
         }
     }
 
@@ -353,7 +403,24 @@ impl DaemonResponse {
     pub fn search_results(results: Vec<SearchResultSummary>) -> Self {
         Self {
             version: PROTOCOL_VERSION,
-            kind: DaemonResponseKind::SearchResults { results },
+            kind: DaemonResponseKind::SearchResults {
+                results,
+                latency_ms: None,
+            },
+        }
+    }
+
+    #[must_use]
+    pub fn search_results_with_latency(
+        results: Vec<SearchResultSummary>,
+        latency_ms: u64,
+    ) -> Self {
+        Self {
+            version: PROTOCOL_VERSION,
+            kind: DaemonResponseKind::SearchResults {
+                results,
+                latency_ms: Some(latency_ms),
+            },
         }
     }
 
@@ -418,6 +485,9 @@ pub enum DaemonResponseKind {
     },
     SearchResults {
         results: Vec<SearchResultSummary>,
+        /// Server-side search latency in milliseconds.
+        #[serde(default)]
+        latency_ms: Option<u64>,
     },
     CleanupResult {
         removed: u64,

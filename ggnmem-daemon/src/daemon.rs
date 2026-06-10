@@ -273,6 +273,7 @@ async fn handle_connection(
             limit,
             cwd,
             recent_only,
+            search_mode,
             ..
         } => {
             match storage::search_commands(
@@ -281,10 +282,13 @@ async fn handle_connection(
                 limit,
                 cwd,
                 recent_only,
+                search_mode,
             )
             .await
             {
-                Ok(results) => DaemonResponse::search_results(results),
+                Ok((results, latency_ms)) => {
+                    DaemonResponse::search_results_with_latency(results, latency_ms)
+                }
                 Err(error) => DaemonResponse::error("search_failed", error.to_string()),
             }
         }

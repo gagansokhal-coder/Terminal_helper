@@ -98,9 +98,10 @@ pub async fn search_commands(
     limit: u32,
     cwd: Option<String>,
     recent_only: bool,
-) -> DaemonResult<Vec<crate::protocol::SearchResultSummary>> {
+    search_mode: crate::protocol::SearchMode,
+) -> DaemonResult<(Vec<crate::protocol::SearchResultSummary>, u64)> {
     let results = tokio::task::spawn_blocking(move || {
-        use crate::protocol::{SearchSource, FTS_WEIGHT, RRF_K, SEMANTIC_WEIGHT};
+        use crate::protocol::{SearchMode, SearchSource, FTS_WEIGHT, RRF_K, SEMANTIC_WEIGHT};
         use std::collections::HashMap;
         use std::time::Instant;
 
@@ -114,6 +115,81 @@ pub async fn search_commands(
         }
         opts = opts.with_recent_only(recent_only);
         let fts_results = database.search_commands_v2(&opts)?;
+
+        // ── FTS-only fast path ───────────────────────────────────────────
+        if search_mode == SearchMode::FtsOnly {
+            let elapsed_ms = start.elapsed().as_millis() as u64;
+            let _ = database.record_search_performed();
+            let _ = database.record_search_latency(elapsed_ms, false);
+
+            let summaries: Vec<crate::protocol::SearchResultSummary> = fts_results
+                .into_iter()
+                .take(limit as usize)
+                .map(|r| crate::protocol::SearchResultSummary {
+                    command: r.command,
+                    cwd: r.cwd,
+                    exit_code: r.exit_code,
+                    duration_ms: r.duration_ms,
+                    completed_at_ms: r.completed_at_ms,
+                    run_count: r.run_count,
+                    match_kind: r.match_kind,
+                    score: r.score,
+                    source: SearchSource::Fts,
+                })
+                .collect();
+            return Ok::<(Vec<crate::protocol::SearchResultSummary>, u64), ggnmem_db::DbError>(
+                (summaries, elapsed_ms),
+            );
+        }
+
+        // ── Semantic-only path ────────────────────────────────────────────
+        if search_mode == SearchMode::SemanticOnly {
+            let ai_cfg = default_ai_config();
+            let provider = cached_provider();
+            let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path);
+            let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store);
+
+            let semantic_matches = pipeline
+                .search_embedding(&query, (limit * 2) as usize)
+                .unwrap_or_default();
+
+            let semantic_db = Database::open(&DatabaseConfig::new(database_path))?;
+            let mut summaries: Vec<crate::protocol::SearchResultSummary> = Vec::new();
+            let total = semantic_matches.len();
+            for (_rank, m) in semantic_matches.iter().enumerate() {
+                if let Ok(Some(cmd)) = semantic_db.get_command_by_id(&m.id) {
+                    let similarity = 1.0 - m.distance as f64;
+                    let score = if total > 0 {
+                        similarity.clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    summaries.push(crate::protocol::SearchResultSummary {
+                        command: cmd.command,
+                        cwd: cmd.cwd,
+                        exit_code: cmd.exit_code,
+                        duration_ms: cmd.duration_ms,
+                        completed_at_ms: cmd.completed_at_ms,
+                        run_count: 1,
+                        match_kind: ggnmem_db::MatchKind::Partial,
+                        score,
+                        source: SearchSource::Semantic,
+                    });
+                }
+            }
+            summaries.truncate(limit as usize);
+
+            let elapsed_ms = start.elapsed().as_millis() as u64;
+            let _ = database.record_search_performed();
+            let _ = database.record_search_latency(elapsed_ms, false);
+            let _ = database.record_semantic_search();
+
+            return Ok::<(Vec<crate::protocol::SearchResultSummary>, u64), ggnmem_db::DbError>(
+                (summaries, elapsed_ms),
+            );
+        }
+
+        // ── Hybrid path (default): FTS + semantic + RRF merge ────────────
 
         // 2. Attempt semantic search (auto-detect: skip if no embeddings).
         let ai_cfg = default_ai_config();
@@ -147,7 +223,9 @@ pub async fn search_commands(
                     source: SearchSource::Fts,
                 })
                 .collect();
-            return Ok::<Vec<crate::protocol::SearchResultSummary>, ggnmem_db::DbError>(summaries);
+            return Ok::<(Vec<crate::protocol::SearchResultSummary>, u64), ggnmem_db::DbError>(
+                (summaries, elapsed_ms),
+            );
         }
 
         // 3. Look up semantic match metadata.
@@ -258,7 +336,9 @@ pub async fn search_commands(
             })
             .collect();
 
-        Ok::<Vec<crate::protocol::SearchResultSummary>, ggnmem_db::DbError>(summaries)
+        Ok::<(Vec<crate::protocol::SearchResultSummary>, u64), ggnmem_db::DbError>(
+            (summaries, elapsed_ms),
+        )
     })
     .await??;
     Ok(results)

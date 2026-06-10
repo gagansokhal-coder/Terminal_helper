@@ -90,7 +90,7 @@ async fn daemon_ping_health_queue_and_db_ingestion_work() {
     )
     .await
     .expect("search response");
-    let DaemonResponseKind::SearchResults { results } = search.kind else {
+    let DaemonResponseKind::SearchResults { results, .. } = search.kind else {
         panic!("expected search response");
     };
     assert!(
