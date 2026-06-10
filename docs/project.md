@@ -95,3 +95,25 @@ When acting on this repository, execute tasks in the following sequence unless o
 6. **Phase 6: TUI & PTY.** Build the ratatui interface and PTY shadow buffer logic.
 
 **END OF SYSTEM DIRECTIVES.** Proceed with generating the required workspace architecture.
+
+## **9\. Phase Features & UX Specifications**
+
+### **Smart Ctrl+R Experience (Phase 14)**
+The interactive terminal history UI (`ggnmem ui`) supports hybrid search (FTS + Semantic embeddings).
+
+* **Search Modes**:
+  * **Hybrid (Default)**: RRF-merged exact keyword matches and semantic matches. Supports natural language queries (e.g., "check git changes" → `git status`).
+  * **FTS Only**: Fast, keyword-only search without semantic overhead.
+  * **Semantic Only**: Vector similarity search without fuzzy matching.
+* **Keyboard Shortcuts**:
+  * `Ctrl+F`: Toggle FTS-only mode
+  * `Ctrl+S`: Toggle Semantic-only mode
+  * `Ctrl+H`: Toggle Hybrid mode
+  * `Ctrl+L`: Clear search query text
+  * `Enter`: Insert selected command into prompt
+  * `Shift+Enter`: Execute selected command directly
+  * `Shift+C`: Copy to clipboard
+  * `Esc`: Exit UI
+* **UI Elements**:
+  * **Status Bar**: Mode badge, result count, server-side latency (e.g., `[HYBRID] 12 results | 42 ms`).
+  * **Source Labels**: Compact, color-coded badges indicating match origin (`[FTS]`, `[SEM]`, `[HYB]`).

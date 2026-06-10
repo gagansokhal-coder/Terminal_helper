@@ -1948,3 +1948,30 @@ Agents must optimize for:
 * low-level engineering quality
 
 This project is intended to evolve into a serious open-source infrastructure tool, not a tutorial/demo repository.
+
+---
+
+Session: 2026-06-09
+
+### Smart Ctrl+R Experience
+
+Implemented Phase 14 Smart Ctrl+R Experience which transforms the TUI's Ctrl+R search from keyword-only to the same hybrid search engine used by `ggnmem search` (FTS + Semantic + RRF).
+
+- **TUI Updates (`tui.rs`)**:
+  - Added `SearchMode` state (Hybrid, FtsOnly, SemanticOnly).
+  - Added new keyboard shortcuts:
+    - `Ctrl+F`: Toggle FTS-only mode
+    - `Ctrl+S`: Toggle Semantic-only mode
+    - `Ctrl+H`: Toggle Hybrid mode
+    - `Ctrl+L`: Clear query text
+  - Replaced emoji source indicators with text badges (`[FTS]`, `[SEM]`, `[HYB]`).
+  - Added a new mode badge to the search input title (e.g., ` 🔍 ggnmem [HYBRID] `).
+  - Updated the status bar to show the current mode, result count, and server-side latency (e.g., `[HYBRID] 12 results | 42 ms`).
+- **Protocol Updates (`protocol.rs`)**:
+  - Added `SearchMode` enum to the `SearchCommands` request variant.
+  - Added `latency_ms` to the `SearchResults` response variant.
+- **Daemon Updates (`storage.rs`, `daemon.rs`)**:
+  - Modified `search_commands` to route queries to FTS-only, Semantic-only, or Hybrid code paths based on the requested `SearchMode`.
+  - Passed search latency up to the client.
+- **CLI Updates (`main.rs`)**:
+  - Added a `--mode <fts|semantic|hybrid>` flag to `ggnmem search`.
