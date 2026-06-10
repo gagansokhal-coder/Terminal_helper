@@ -1975,3 +1975,110 @@ Implemented Phase 14 Smart Ctrl+R Experience which transforms the TUI's Ctrl+R s
   - Passed search latency up to the client.
 - **CLI Updates (`main.rs`)**:
   - Added a `--mode <fts|semantic|hybrid>` flag to `ggnmem search`.
+
+---
+
+Session: 2026-06-10
+
+### Phase 15 — Distribution & Installation
+
+Implemented distribution and installation workflow so users can install and use ggnmem from pre-built release bundles without building from source.
+
+#### Part A — Release Artifacts
+- **`scripts/build_release.sh`**: Complete rewrite with:
+  - Dynamic architecture detection (`x86_64` / `aarch64`)
+  - VERSION file generation (version, commit, date, arch)
+  - Tarball creation: `ggnmem-linux-<arch>.tar.gz`
+  - Debug symbol stripping when `strip` is available
+  - Summary with binary sizes and tarball size
+
+#### Part B — Install Command
+- **`install.sh`**: Complete rewrite with:
+  - Platform/architecture detection
+  - Existing installation detection (shows old version)
+  - Upgrade-in-place with binary backups (`ggnmem.old`)
+  - Daemon stop before upgrade
+  - Binary verification after install (runs `ggnmem version`)
+  - Config preservation messaging
+  - Database preservation messaging
+  - WSL detection
+  - Upgrade-specific summary with old/new version
+
+#### Part C — Self Diagnostics
+- **`ggnmem-cli/src/main.rs` — `doctor()`**: Extended with:
+  - AI model health: verifies embedding model can produce vectors
+  - Vector DB health: checks initialization and vector count
+  - Search backend status: reports FTS5 and semantic availability
+  - Hybrid search status: reports if both FTS + semantic are available
+  - Ctrl+R integration status: checks shell hooks + TUI config
+
+#### Part D — Version Information
+- **`ggnmem-cli/build.rs`** [NEW]: Build script captures:
+  - `GGNMEM_BUILD_DATE` — ISO 8601 date
+  - `GGNMEM_GIT_COMMIT` — short git commit hash
+  - `GGNMEM_BUILD_PROFILE` — "debug" or "release"
+- **`ggnmem-cli/src/main.rs` — `version()`**: Enhanced output:
+  - Version, AI status, ONNX status, build profile, commit, date
+  - `--verbose` flag: adds Rust version, target arch, OS, binary path,
+    config path, database path/size, model status, daemon status
+- **`ggnmem-ai/src/lib.rs`**: Added `ONNX_ENABLED` compile-time constant
+  for downstream crates to check ONNX build capability
+
+#### Part E — Upgrade Support
+- **`ggnmem-cli/src/upgrade.rs`** [NEW]: Upgrade module with:
+  - Local bundle discovery (release/, sibling, explicit path)
+  - Tarball extraction
+  - Version comparison (current vs bundle)
+  - Daemon stop/restart around upgrade
+  - Binary backup before replacement
+  - Post-upgrade verification
+  - Config and database preservation messaging
+
+#### Part F — Release Verification
+- **`scripts/test_release.sh`** [NEW]: End-to-end verification:
+  - Extracts tarball, runs install.sh, starts daemon
+  - Tests doctor, version, version --verbose
+  - Tests search and semantic search
+  - Reports pass/fail/skip summary
+
+#### Part G — Documentation
+- **`INSTALL.md`** [NEW]: Comprehensive installation guide:
+  - Quick install, source build, WSL notes
+  - Upgrade process (ggnmem upgrade, install.sh, manual)
+  - Directory layout, troubleshooting, uninstall
+- **`docs/agent_memory.md`**: This session log
+
+#### Clippy Fixes (Pre-existing)
+- `ggnmem-ai/src/models.rs`: Added `#[allow(dead_code)]` on `MINILM_HF_REVISION`
+- `ggnmem-ai/src/onnx.rs`: Replaced `for t in 0..seq_len` with iterator enumerate
+- `ggnmem-daemon/src/protocol.rs`: Replaced manual Default impls with `#[derive(Default)]`
+- `ggnmem-daemon/src/storage.rs`: Removed unused `.enumerate()` call
+- `ggnmem-cli/src/main.rs`: Replaced manual division guard with `checked_div`
+
+#### Architectural Decisions
+- ONNX detection uses compile-time `cfg(feature = "onnx")` via `ggnmem_ai::ONNX_ENABLED`
+- Model installation status stays under `ggnmem ai status`, not `ggnmem version`
+- `ggnmem version --verbose` shows extended diagnostics for debugging
+- Upgrade command initially supports local bundles only (GitHub releases deferred)
+
+#### Files Modified
+- `ggnmem-ai/src/lib.rs` — added `ONNX_ENABLED` constant
+- `ggnmem-ai/src/models.rs` — clippy fix
+- `ggnmem-ai/src/onnx.rs` — clippy fix
+- `ggnmem-cli/src/main.rs` — version, doctor, upgrade routing, clippy fix
+- `ggnmem-daemon/src/protocol.rs` — clippy fix
+- `ggnmem-daemon/src/storage.rs` — clippy fix
+- `install.sh` — complete rewrite
+- `scripts/build_release.sh` — complete rewrite
+
+#### Files Created
+- `ggnmem-cli/build.rs`
+- `ggnmem-cli/src/upgrade.rs`
+- `scripts/test_release.sh`
+- `INSTALL.md`
+
+#### Next Steps
+- Phase 15F: Test on clean Linux/WSL machine
+- Future: GitHub Releases auto-download for `ggnmem upgrade`
+- Future: Windows-native support (deferred per user directive)
+
