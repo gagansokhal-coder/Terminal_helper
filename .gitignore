@@ -5,3 +5,4 @@
 **/*.db-wal
 *.sqlite
 *.sqlite3
+*.tar.gz
