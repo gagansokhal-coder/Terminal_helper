@@ -111,7 +111,9 @@ fn print_usage() {
     println!("  --limit N        Maximum results (default: 20)");
     println!("  --cwd            Boost results from current directory");
     println!("  --recent         Sort by recency only");
+    println!("  --mode MODE      Search mode: fts, semantic, hybrid (default: hybrid)");
     println!("  --json           Output as JSON");
+    println!("  --debug          Show source breakdown and latency");
     println!();
     println!("semantic search:");
     println!("  semantic <query>  Semantic search (vector similarity)");
@@ -718,6 +720,12 @@ async fn search(args: &[String]) -> Result<()> {
     let recent_only = has_flag(args, "--recent");
     let use_cwd = has_flag(args, "--cwd");
     let debug = has_flag(args, "--debug");
+    let search_mode = match parse_named_arg(args, "--mode").as_deref() {
+        Some("fts") => ggnmem_daemon::SearchMode::FtsOnly,
+        Some("semantic" | "sem") => ggnmem_daemon::SearchMode::SemanticOnly,
+        Some("hybrid" | "hyb") | None => ggnmem_daemon::SearchMode::Hybrid,
+        Some(other) => bail!("unknown search mode: {other} (use: fts, semantic, hybrid)"),
+    };
 
     // Resolve current working directory for --cwd boosting.
     let cwd = if use_cwd {
@@ -729,7 +737,7 @@ async fn search(args: &[String]) -> Result<()> {
     };
 
     // Build query from positional args (skip "ggnmem", "search", and any --flag/value pairs).
-    let valued_flags = ["--limit"];
+    let valued_flags = ["--limit", "--mode"];
     let boolean_flags = ["--json", "--cwd", "--recent", "--debug"];
 
     let mut query_parts: Vec<&str> = Vec::new();
@@ -751,22 +759,23 @@ async fn search(args: &[String]) -> Result<()> {
 
     let query = query_parts.join(" ");
     if query.is_empty() {
-        bail!("usage: ggnmem search <query> [--limit N] [--cwd] [--recent] [--json] [--debug]");
+        bail!("usage: ggnmem search <query> [--limit N] [--cwd] [--recent] [--mode fts|semantic|hybrid] [--json] [--debug]");
     }
 
-    // Unified search: daemon auto-detects hybrid (FTS + semantic) when embeddings exist.
+    // Unified search: use the specified search mode.
     let start = std::time::Instant::now();
-    let response = request(DaemonRequest::search_commands_with_options(
+    let response = request(DaemonRequest::search_commands_with_mode(
         &query,
         limit,
         cwd,
         recent_only,
+        search_mode,
     ))
     .await?;
     let elapsed_ms = start.elapsed().as_millis();
 
     match response.kind {
-        DaemonResponseKind::SearchResults { results } => {
+        DaemonResponseKind::SearchResults { results, .. } => {
             if results.is_empty() {
                 println!("no matching commands found for: {query}");
                 return Ok(());

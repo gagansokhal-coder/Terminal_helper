@@ -1,14 +1,18 @@
 //! Interactive TUI for ggnmem search.
 //!
 //! Full-screen ratatui interface with:
-//! - Search input with live filtering
-//! - Scrollable results list with match highlighting
+//! - Hybrid search input with live filtering (FTS + Semantic + RRF)
+//! - Natural language queries ("check git changes" → git status)
+//! - Search mode toggles: Ctrl+F (FTS), Ctrl+S (Semantic), Ctrl+H (Hybrid)
+//! - Scrollable results list with match highlighting and source labels
 //! - Detail preview panel (always visible, toggled with Tab)
 //! - Enter inserts command into shell prompt
 //! - Shift+Enter executes command immediately through the shell hook
+//! - Ctrl+L clears query, Esc exits
 //! - Shift+C copies to clipboard
 //! - Shift+I toggles internal command visibility
 //! - Shift+P pins a command, Shift+F shows favorites only
+//! - Status bar: [MODE] N results | Xms
 
 use std::collections::HashSet;
 use std::io;
@@ -23,7 +27,9 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ggnmem_daemon::{
-    protocol::{DaemonRequest, DaemonResponseKind, SearchResultSummary, SearchSource},
+    protocol::{
+        DaemonRequest, DaemonResponseKind, SearchMode, SearchResultSummary, SearchSource,
+    },
     DaemonConfig, IpcClient,
 };
 use ratatui::{
@@ -74,12 +80,19 @@ struct App {
     show_internal: bool,
     recent_only: bool,
     show_favorites_only: bool,
+    show_source_labels: bool,
     pinned: HashSet<String>,
     status_msg: String,
     search_pending: bool,
     last_keystroke: Instant,
     last_search_query: String,
+    /// Track which mode was used for last search so mode switches force re-search.
+    last_search_mode: SearchMode,
     total_commands: u64,
+    /// Current search mode.
+    search_mode: SearchMode,
+    /// Latency of the last search in milliseconds.
+    search_latency_ms: Option<u64>,
     /// Command to insert into the shell's editable prompt after TUI exit.
     insert_command: Option<String>,
     /// Command to ask the shell hook to execute immediately after TUI exit.
@@ -104,12 +117,16 @@ impl App {
             show_internal: false,
             recent_only: false,
             show_favorites_only: false,
+            show_source_labels: true,
             pinned: HashSet::new(),
             status_msg: String::new(),
             search_pending: false,
             last_keystroke: Instant::now(),
             last_search_query: String::new(),
+            last_search_mode: SearchMode::Hybrid,
             total_commands: 0,
+            search_mode: SearchMode::Hybrid,
+            search_latency_ms: None,
             insert_command: None,
             execute_command: None,
             clipboard_feedback: None,
@@ -148,7 +165,8 @@ impl App {
     fn needs_search(&self) -> bool {
         self.search_pending
             && self.last_keystroke.elapsed() >= Duration::from_millis(SEARCH_DEBOUNCE_MS)
-            && self.query != self.last_search_query
+            && (self.query != self.last_search_query
+                || self.search_mode != self.last_search_mode)
     }
 
     fn mark_dirty(&mut self) {
@@ -198,43 +216,24 @@ impl App {
 
     fn update_status(&mut self) {
         let count = self.results.len();
-        let mut parts = Vec::new();
+        let mode_str = format!("{}", self.search_mode);
+        let latency_str = self
+            .search_latency_ms
+            .map(|ms| format!(" | {ms} ms"))
+            .unwrap_or_default();
 
         if self.show_favorites_only {
-            parts.push(format!("★ {count} pinned"));
+            self.status_msg = format!("[{mode_str}] ★ {count} pinned{latency_str}");
         } else if self.recent_only {
-            parts.push(format!("⏱ {count} recent"));
+            self.status_msg = format!("[{mode_str}] ⏱ {count} recent{latency_str}");
         } else if self.query.is_empty() {
-            parts.push(format!("{count} commands"));
+            self.status_msg = format!("[{mode_str}] {count} commands{latency_str}");
         } else {
-            parts.push(format!(
-                "{count} result{}",
+            self.status_msg = format!(
+                "[{mode_str}] {count} result{}{latency_str}",
                 if count == 1 { "" } else { "s" }
-            ));
+            );
         }
-
-        if !self.show_internal {
-            let hidden = self
-                .all_results
-                .iter()
-                .filter(|r| ggnmem_db::is_internal_command(&r.command))
-                .count();
-            if hidden > 0 {
-                parts.push(format!("{hidden} internal hidden"));
-            }
-        }
-
-        // Show AI source breakdown when semantic/hybrid results exist.
-        let ai_count = self
-            .results
-            .iter()
-            .filter(|r| r.source != SearchSource::Fts)
-            .count();
-        if ai_count > 0 {
-            parts.push(format!("🧠 {ai_count} AI"));
-        }
-
-        self.status_msg = parts.join("  │  ");
     }
 }
 
@@ -257,8 +256,9 @@ pub async fn run_tui() -> Result<()> {
     }
 
     // Load recent commands as initial results.
-    if let Ok(results) = do_search("", app.cwd.clone()).await {
+    if let Ok((results, latency_ms)) = do_search("", app.cwd.clone(), app.search_mode).await {
         app.all_results = results;
+        app.search_latency_ms = Some(latency_ms);
         app.apply_filters();
         app.update_status();
     }
@@ -306,12 +306,15 @@ async fn run_event_loop(
         // Fire debounced search.
         if app.needs_search() {
             let query = app.query.clone();
+            let mode = app.search_mode;
             app.last_search_query = query.clone();
+            app.last_search_mode = mode;
             app.search_pending = false;
 
-            match do_search(&query, app.cwd.clone()).await {
-                Ok(results) => {
+            match do_search(&query, app.cwd.clone(), mode).await {
+                Ok((results, latency_ms)) => {
                     app.all_results = results;
+                    app.search_latency_ms = Some(latency_ms);
                     app.apply_filters();
                     app.update_status();
                 }
@@ -372,6 +375,40 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
                 app.insert_command = Some(result.command.clone());
                 return true;
             }
+        }
+
+        // ── Ctrl+L: clear query ──
+        KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.query.clear();
+            app.cursor_pos = 0;
+            app.last_search_query = String::new();
+            app.mark_dirty();
+        }
+
+        // ── Ctrl+F: toggle FTS-only mode ──
+        KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.search_mode = if app.search_mode == SearchMode::FtsOnly {
+                SearchMode::Hybrid
+            } else {
+                SearchMode::FtsOnly
+            };
+            app.mark_dirty();
+        }
+
+        // ── Ctrl+S: toggle Semantic-only mode ──
+        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.search_mode = if app.search_mode == SearchMode::SemanticOnly {
+                SearchMode::Hybrid
+            } else {
+                SearchMode::SemanticOnly
+            };
+            app.mark_dirty();
+        }
+
+        // ── Ctrl+H: toggle Hybrid mode ──
+        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.search_mode = SearchMode::Hybrid;
+            app.mark_dirty();
         }
 
         // ── Tab: toggle preview ──
@@ -500,12 +537,25 @@ fn draw_ui(f: &mut Frame, app: &mut App) {
 }
 
 fn draw_search_input(f: &mut Frame, app: &App, area: Rect) {
-    let mut title_parts = vec![Span::styled(
-        " 🔍 ggnmem ",
-        Style::default()
-            .fg(ACCENT_CYAN)
-            .add_modifier(Modifier::BOLD),
-    )];
+    let mode_color = match app.search_mode {
+        SearchMode::Hybrid => ACCENT_YELLOW,
+        SearchMode::FtsOnly => ACCENT_CYAN,
+        SearchMode::SemanticOnly => ACCENT_PURPLE,
+    };
+    let mut title_parts = vec![
+        Span::styled(
+            " 🔍 ggnmem ",
+            Style::default()
+                .fg(ACCENT_CYAN)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("[{}] ", app.search_mode),
+            Style::default()
+                .fg(mode_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
 
     // Mode indicators.
     if app.show_internal {
@@ -585,10 +635,11 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_results_list(f: &mut Frame, app: &mut App, area: Rect) {
+    let show_labels = app.show_source_labels;
     let items: Vec<ListItem> = app
         .results
         .iter()
-        .map(|result| result_to_list_item(result, &app.query, &app.pinned))
+        .map(|result| result_to_list_item(result, &app.query, &app.pinned, show_labels))
         .collect();
 
     let count = app.results.len();
@@ -624,6 +675,7 @@ fn result_to_list_item<'a>(
     result: &SearchResultSummary,
     query: &str,
     pinned: &HashSet<String>,
+    show_source_labels: bool,
 ) -> ListItem<'a> {
     let icon = command_icon(&result.command);
     let is_pinned = pinned.contains(&result.command);
@@ -649,7 +701,11 @@ fn result_to_list_item<'a>(
     };
 
     let match_badge = match_kind_span(&result.match_kind);
-    let source_badge = source_kind_span(&result.source);
+    let source_badge = if show_source_labels {
+        source_kind_span(&result.source)
+    } else {
+        Span::raw("")
+    };
     let cmd_spans = highlight_command(&result.command, query);
 
     let mut line1 = vec![
@@ -736,9 +792,24 @@ fn match_kind_span(kind: &ggnmem_db::MatchKind) -> Span<'static> {
 
 fn source_kind_span(source: &SearchSource) -> Span<'static> {
     match source {
-        SearchSource::Fts => Span::raw(""),
-        SearchSource::Semantic => Span::styled("🧠", Style::default().fg(ACCENT_PURPLE)),
-        SearchSource::Hybrid => Span::styled("⚡", Style::default().fg(ACCENT_YELLOW)),
+        SearchSource::Fts => Span::styled(
+            "[FTS] ",
+            Style::default()
+                .fg(ACCENT_CYAN)
+                .add_modifier(Modifier::BOLD),
+        ),
+        SearchSource::Semantic => Span::styled(
+            "[SEM] ",
+            Style::default()
+                .fg(ACCENT_PURPLE)
+                .add_modifier(Modifier::BOLD),
+        ),
+        SearchSource::Hybrid => Span::styled(
+            "[HYB] ",
+            Style::default()
+                .fg(ACCENT_YELLOW)
+                .add_modifier(Modifier::BOLD),
+        ),
     }
 }
 
@@ -936,25 +1007,20 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     ];
 
     let help_spans = vec![
+        Span::styled("^F", Style::default().fg(ACCENT_CYAN)),
+        Span::styled(" fts ", Style::default().fg(FG_DIM)),
+        Span::styled("^S", Style::default().fg(ACCENT_CYAN)),
+        Span::styled(" sem ", Style::default().fg(FG_DIM)),
+        Span::styled("^H", Style::default().fg(ACCENT_CYAN)),
+        Span::styled(" hyb ", Style::default().fg(FG_DIM)),
+        Span::styled("^L", Style::default().fg(ACCENT_CYAN)),
+        Span::styled(" clear ", Style::default().fg(FG_DIM)),
         Span::styled("Enter", Style::default().fg(ACCENT_CYAN)),
-        Span::styled(" insert  ", Style::default().fg(FG_DIM)),
-        Span::styled("Shift+Enter", Style::default().fg(ACCENT_CYAN)),
-        Span::styled(" exec  ", Style::default().fg(FG_DIM)),
+        Span::styled(" ins ", Style::default().fg(FG_DIM)),
         Span::styled("C", Style::default().fg(ACCENT_CYAN)),
-        Span::styled(" copy  ", Style::default().fg(FG_DIM)),
-        Span::styled("I", Style::default().fg(ACCENT_CYAN)),
-        Span::styled(
-            if app.show_internal {
-                " int✓ "
-            } else {
-                " int  "
-            },
-            Style::default().fg(FG_DIM),
-        ),
-        Span::styled("P", Style::default().fg(ACCENT_CYAN)),
-        Span::styled(" pin  ", Style::default().fg(FG_DIM)),
+        Span::styled(" copy ", Style::default().fg(FG_DIM)),
         Span::styled("Tab", Style::default().fg(ACCENT_CYAN)),
-        Span::styled(" preview  ", Style::default().fg(FG_DIM)),
+        Span::styled(" preview ", Style::default().fg(FG_DIM)),
         Span::styled("Esc", Style::default().fg(ACCENT_PINK)),
         Span::styled(" quit ", Style::default().fg(FG_DIM)),
     ];
@@ -976,37 +1042,53 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
 
 // ─── IPC helpers ─────────────────────────────────────────────────────────────
 
-async fn do_search(query: &str, cwd: Option<String>) -> Result<Vec<SearchResultSummary>> {
+async fn do_search(
+    query: &str,
+    cwd: Option<String>,
+    search_mode: SearchMode,
+) -> Result<(Vec<SearchResultSummary>, u64)> {
     let config = DaemonConfig::load().context("load config")?;
     let mut client = IpcClient::connect(&config.endpoint)
         .await
         .context("connect to daemon")?;
 
+    let start = Instant::now();
     let request = if query.trim().is_empty() {
         DaemonRequest::query_recent(SEARCH_LIMIT)
     } else {
-        DaemonRequest::search_commands_with_options(query, SEARCH_LIMIT, cwd, false)
+        DaemonRequest::search_commands_with_mode(query, SEARCH_LIMIT, cwd, false, search_mode)
     };
 
     let response: ggnmem_daemon::DaemonResponse =
         client.request(&request).await.context("daemon request")?;
+    let client_latency_ms = start.elapsed().as_millis() as u64;
 
     match response.kind {
-        DaemonResponseKind::SearchResults { results } => Ok(results),
-        DaemonResponseKind::RecentCommands { commands } => Ok(commands
-            .into_iter()
-            .map(|c| SearchResultSummary {
-                command: c.command,
-                cwd: c.cwd,
-                exit_code: c.exit_code,
-                duration_ms: c.duration_ms,
-                completed_at_ms: c.completed_at_ms,
-                run_count: 1,
-                match_kind: ggnmem_db::MatchKind::Exact,
-                score: 1.0,
-                source: SearchSource::Fts,
-            })
-            .collect()),
+        DaemonResponseKind::SearchResults {
+            results,
+            latency_ms,
+        } => {
+            // Prefer server-reported latency; fall back to client-measured.
+            let latency = latency_ms.unwrap_or(client_latency_ms);
+            Ok((results, latency))
+        }
+        DaemonResponseKind::RecentCommands { commands } => {
+            let results: Vec<SearchResultSummary> = commands
+                .into_iter()
+                .map(|c| SearchResultSummary {
+                    command: c.command,
+                    cwd: c.cwd,
+                    exit_code: c.exit_code,
+                    duration_ms: c.duration_ms,
+                    completed_at_ms: c.completed_at_ms,
+                    run_count: 1,
+                    match_kind: ggnmem_db::MatchKind::Exact,
+                    score: 1.0,
+                    source: SearchSource::Fts,
+                })
+                .collect();
+            Ok((results, client_latency_ms))
+        }
         DaemonResponseKind::Error { code, message } => anyhow::bail!("{code}: {message}"),
         _ => anyhow::bail!("unexpected response"),
     }
