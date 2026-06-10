@@ -147,8 +147,8 @@ impl MiniLmEmbeddingProvider {
         let mut pooled = vec![0.0f32; hidden_size];
         let mut mask_sum = 0.0f32;
 
-        for t in 0..seq_len {
-            let mask_val = attention_mask[t] as f32;
+        for (t, &mask_val_i64) in attention_mask.iter().enumerate().take(seq_len) {
+            let mask_val = mask_val_i64 as f32;
             mask_sum += mask_val;
             let offset = t * hidden_size;
             for h in 0..hidden_size {

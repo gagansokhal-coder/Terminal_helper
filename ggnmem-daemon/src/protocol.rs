@@ -14,20 +14,15 @@ pub const SEMANTIC_WEIGHT: f32 = 0.4;
 pub const RRF_K: f32 = 60.0;
 
 /// Which search strategy the caller wants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SearchMode {
     /// Full hybrid: FTS + semantic + RRF merge.
+    #[default]
     Hybrid,
     /// FTS5 keyword/fuzzy search only (no embeddings).
     FtsOnly,
     /// Semantic/vector search only (no FTS).
     SemanticOnly,
-}
-
-impl Default for SearchMode {
-    fn default() -> Self {
-        Self::Hybrid
-    }
 }
 
 impl std::fmt::Display for SearchMode {
@@ -74,20 +69,15 @@ pub struct CommandSummary {
 }
 
 /// Which search engine produced a result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SearchSource {
     /// Result came from FTS5 keyword/fuzzy search only.
+    #[default]
     Fts,
     /// Result came from vector/semantic search only.
     Semantic,
     /// Result appeared in both FTS and semantic lists, merged by RRF.
     Hybrid,
-}
-
-impl Default for SearchSource {
-    fn default() -> Self {
-        Self::Fts
-    }
 }
 
 impl std::fmt::Display for SearchSource {

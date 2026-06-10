@@ -60,6 +60,7 @@ struct ModelAsset {
 /// Pinned Hugging Face revision for all-MiniLM-L6-v2 model assets.
 /// Using a specific commit ensures reproducible downloads.
 #[cfg(feature = "onnx")]
+#[allow(dead_code)]
 const MINILM_HF_REVISION: &str = "refs/heads/main";
 
 /// Supported local embedding models.

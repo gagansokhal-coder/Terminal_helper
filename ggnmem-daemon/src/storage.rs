@@ -156,7 +156,7 @@ pub async fn search_commands(
             let semantic_db = Database::open(&DatabaseConfig::new(database_path))?;
             let mut summaries: Vec<crate::protocol::SearchResultSummary> = Vec::new();
             let total = semantic_matches.len();
-            for (_rank, m) in semantic_matches.iter().enumerate() {
+            for m in semantic_matches.iter() {
                 if let Ok(Some(cmd)) = semantic_db.get_command_by_id(&m.id) {
                     let similarity = 1.0 - m.distance as f64;
                     let score = if total > 0 {
