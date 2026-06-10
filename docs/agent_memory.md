@@ -2077,6 +2077,11 @@ Implemented distribution and installation workflow so users can install and use 
 - `scripts/test_release.sh`
 - `INSTALL.md`
 
+#### Release Verification Fixes
+- `install.sh`: Replaced `ggnmem-daemon --help` check with `[ -x ... ]` to prevent hanging during installation.
+- `test_release.sh`: Fixed TUI command availability check to avoid running the interactive `ggnmem ui` command.
+- Removed stale `~/.cargo/bin/ggnmem` binaries that were overriding the newly installed `~/.local/bin/ggnmem` in PATH.
+
 #### Next Steps
 - Phase 15F: Test on clean Linux/WSL machine
 - Future: GitHub Releases auto-download for `ggnmem upgrade`

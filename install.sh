@@ -197,8 +197,8 @@ else
     exit 1
 fi
 
-# Verify daemon binary.
-if "$BIN_DIR/ggnmem-daemon" --help > /dev/null 2>&1 || [ -x "$BIN_DIR/ggnmem-daemon" ]; then
+# Verify daemon binary (just check it's executable — don't run it as it starts the daemon).
+if [ -x "$BIN_DIR/ggnmem-daemon" ]; then
     ok "ggnmem-daemon binary verified"
 else
     warn "ggnmem-daemon may not be executable — check manually"

@@ -173,10 +173,10 @@ fi
 step "6. Check TUI availability"
 
 # We can't run the actual TUI in a script, but verify the binary supports it.
-if ggnmem ui --help >/dev/null 2>&1 || ggnmem 2>&1 | grep -q "ui"; then
+if ggnmem 2>&1 | grep -q "  ui "; then
     pass "TUI command available"
 else
-    skip "TUI command check (may not support --help)"
+    skip "TUI command check"
 fi
 
 # ─── Step 7: Run search ──────────────────────────────────────────────────────
