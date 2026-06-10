@@ -32,3 +32,7 @@ pub use models::{ModelInfo, ModelManager};
 #[cfg(feature = "onnx")]
 pub use onnx::MiniLmEmbeddingProvider;
 pub use vector::{VectorMatch, VectorStore};
+
+/// Whether ONNX Runtime support was compiled in.
+/// Downstream crates can use this to report build capabilities.
+pub const ONNX_ENABLED: bool = cfg!(feature = "onnx");
