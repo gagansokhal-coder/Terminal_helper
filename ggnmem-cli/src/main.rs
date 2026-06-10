@@ -5,6 +5,7 @@ mod profile;
 mod service;
 mod setup;
 mod tui;
+mod upgrade;
 
 use anyhow::{bail, Context, Result};
 use ggnmem_daemon::{
@@ -34,7 +35,7 @@ async fn main() -> Result<()> {
         Some("stats") => stats().await,
         Some("ui") => tui::run_tui().await,
         Some("version" | "--version" | "-V") => {
-            version();
+            version(&args);
             Ok(())
         }
         Some("install") => setup::install(),
@@ -49,6 +50,7 @@ async fn main() -> Result<()> {
         Some("export") => export::cmd_export(&args).await,
         Some("ai") => cmd_ai(&args),
         Some("semantic") => semantic(&args).await,
+        Some("upgrade") => upgrade::cmd_upgrade(&args),
         Some(command) => bail!("unknown command: {command}"),
         None => {
             print_usage();
@@ -104,8 +106,9 @@ fn print_usage() {
     println!("setup:");
     println!("  install          Set up shell integration and config");
     println!("  uninstall        Remove ggnmem (--full to include database)");
+    println!("  upgrade          Upgrade from a local release bundle");
     println!("  doctor           Check installation and daemon health");
-    println!("  version          Show version");
+    println!("  version          Show version (--verbose for extended info)");
     println!();
     println!("search options:");
     println!("  --limit N        Maximum results (default: 20)");
@@ -165,8 +168,110 @@ fn cmd_ai(args: &[String]) -> Result<()> {
 
 // ─── Version ─────────────────────────────────────────────────────────────────
 
-fn version() {
-    println!("ggnmem {}", env!("CARGO_PKG_VERSION"));
+fn version(args: &[String]) {
+    let verbose = has_flag(args, "--verbose") || has_flag(args, "-v");
+
+    let version = env!("CARGO_PKG_VERSION");
+    let build_date = env!("GGNMEM_BUILD_DATE");
+    let git_commit = env!("GGNMEM_GIT_COMMIT");
+    let build_profile = env!("GGNMEM_BUILD_PROFILE");
+
+    // AI enabled — read from config at runtime.
+    let ai_enabled = config::load().map(|cfg| cfg.ai.ai_enabled).unwrap_or(false);
+
+    // ONNX enabled — compile-time feature check (from ggnmem-ai crate).
+    let onnx_enabled = ggnmem_ai::ONNX_ENABLED;
+
+    println!("ggnmem {version}");
+    println!();
+    println!("  Version:  {version}");
+    println!(
+        "  AI:       {}",
+        if ai_enabled { "enabled" } else { "disabled" }
+    );
+    println!(
+        "  ONNX:     {}",
+        if onnx_enabled { "enabled" } else { "disabled" }
+    );
+    println!("  Build:    {build_profile}");
+    println!("  Commit:   {git_commit}");
+    println!("  Date:     {build_date}");
+
+    if verbose {
+        println!();
+        println!("  ─── verbose ───");
+        println!(
+            "  Rust:     {}",
+            option_env!("RUSTC_VERSION").unwrap_or("unknown")
+        );
+        println!("  Target:   {}", std::env::consts::ARCH);
+        println!("  OS:       {}", std::env::consts::OS);
+        println!("  Family:   {}", std::env::consts::FAMILY);
+        println!(
+            "  Binary:   {}",
+            std::env::current_exe()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| "unknown".to_owned())
+        );
+
+        // Config file.
+        match config::config_path() {
+            Ok(path) => {
+                if path.exists() {
+                    println!("  Config:   {}", path.display());
+                } else {
+                    println!("  Config:   {} (defaults)", path.display());
+                }
+            }
+            Err(_) => println!("  Config:   unavailable"),
+        }
+
+        // Database path.
+        let db_path = default_db_path();
+        if db_path.exists() {
+            let size = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
+            println!("  Database: {} ({})", db_path.display(), format_bytes(size));
+        } else {
+            println!("  Database: {} (not created)", db_path.display());
+        }
+
+        // ONNX model info (compile-time check only, no runtime load).
+        if onnx_enabled {
+            match config::load() {
+                Ok(cfg) => {
+                    let ai_cfg = build_ai_config(&cfg);
+                    let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir);
+                    let installed = mgr.is_installed(&cfg.ai.model_name);
+                    println!(
+                        "  Model:    {} ({})",
+                        cfg.ai.model_name,
+                        if installed {
+                            "installed"
+                        } else {
+                            "not installed"
+                        }
+                    );
+                }
+                Err(_) => println!("  Model:    unknown"),
+            }
+        }
+
+        // Daemon status.
+        match service::daemon_status() {
+            Ok((running, pid)) => {
+                if running {
+                    if let Some(p) = pid {
+                        println!("  Daemon:   running (PID {p})");
+                    } else {
+                        println!("  Daemon:   running");
+                    }
+                } else {
+                    println!("  Daemon:   not running");
+                }
+            }
+            Err(_) => println!("  Daemon:   unknown"),
+        }
+    }
 }
 
 // ─── Existing commands ───────────────────────────────────────────────────────
@@ -665,10 +770,15 @@ async fn doctor() -> Result<()> {
 
     println!();
     print!("ai              ... ");
+    let mut ai_ok = false;
+    let mut model_ok = false;
+    let mut vector_db_ok = false;
+    let mut vector_count: usize = 0;
     match config::load() {
         Ok(cfg) => {
             if cfg.ai.ai_enabled {
                 println!("\u{2713} enabled");
+                ai_ok = true;
             } else {
                 println!("\u{2717} disabled");
             }
@@ -686,6 +796,7 @@ async fn doctor() -> Result<()> {
                     .map(format_bytes)
                     .unwrap_or_else(|| "unknown".to_owned());
                 println!("\u{2713} ({})", size_str);
+                model_ok = true;
             } else {
                 println!("\u{2717}");
             }
@@ -694,14 +805,76 @@ async fn doctor() -> Result<()> {
             print!("  vector db     ... ");
             if store.is_initialized() {
                 let count = store.count().unwrap_or(0);
+                vector_count = count as usize;
                 println!("\u{2713} initialized ({count} vectors)");
+                vector_db_ok = true;
             } else {
                 println!("\u{2014} not initialized");
+            }
+
+            // AI model health: can it produce embeddings?
+            print!("  model health  ... ");
+            if model_ok {
+                let (provider, provider_name) =
+                    ggnmem_ai::create_provider(&ai_cfg.models_dir, &cfg.ai.model_name);
+                match provider.embed_query("test") {
+                    Ok(embedding) if !embedding.is_empty() => {
+                        println!("\u{2713} ok ({provider_name}, {}d)", embedding.len());
+                    }
+                    Ok(_) => println!("\u{2717} produced empty embedding"),
+                    Err(e) => println!("\u{2717} {e}"),
+                }
+            } else {
+                println!("\u{2014} model not installed");
             }
         }
         Err(_) => {
             println!("? (config not loaded)");
         }
+    }
+
+    // ── Search backend status ──
+
+    println!();
+    print!("search backends ... ");
+    let fts_ok = db_path.exists(); // FTS5 is always available when DB exists.
+    let semantic_ok = ai_ok && model_ok && vector_db_ok && vector_count > 0;
+    let hybrid_ok = fts_ok && semantic_ok;
+
+    if fts_ok {
+        print!("\u{2713} FTS5 ");
+    } else {
+        print!("\u{2717} FTS5 ");
+    }
+    if semantic_ok {
+        print!("\u{2713} semantic ");
+    } else {
+        print!("\u{2717} semantic ");
+    }
+    println!();
+
+    // Hybrid search status.
+    print!("hybrid search   ... ");
+    if hybrid_ok {
+        println!("\u{2713} available (FTS + semantic)");
+    } else if fts_ok {
+        println!("\u{2714} FTS only (enable AI for hybrid)");
+    } else {
+        println!("\u{2717} not available (start daemon to create database)");
+    }
+
+    // ── Ctrl+R integration status ──
+
+    print!("ctrl+r          ... ");
+    let tui_enabled = config::load().map(|c| c.features.tui).unwrap_or(true);
+    if shell_found && tui_enabled {
+        println!("\u{2713} ready (shell hooks + TUI enabled)");
+    } else if shell_found && !tui_enabled {
+        println!("\u{2717} TUI disabled (ggnmem config set tui true)");
+    } else if !shell_found && tui_enabled {
+        println!("\u{2717} shell hooks not configured (run: ggnmem install)");
+    } else {
+        println!("\u{2717} needs shell hooks + TUI enabled");
     }
 
     println!();
@@ -1270,8 +1443,7 @@ fn ai_install(args: &[String]) -> Result<()> {
     }
 
     match mgr.install(model_name, |downloaded, total| {
-        if total > 0 {
-            let pct = (downloaded * 100) / total;
+        if let Some(pct) = (downloaded * 100).checked_div(total) {
             eprint!(
                 "\r  downloading: {} / {} ({pct}%)",
                 format_bytes(downloaded),
