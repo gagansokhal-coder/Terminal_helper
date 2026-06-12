@@ -144,21 +144,26 @@ candle
 
 ## Highest Priority
 
-* Validate the full workspace on a clean Linux/WSL toolchain after Phase 12A.
-* Decide the next roadmap target (e.g., full model loading for AI, or PTY overlays).
-* Keep native Windows validation blocked until MSVC Build Tools or a working 64-bit MinGW toolchain is installed.
+* Test release on a clean Linux/WSL machine (friend installs from tarball without Rust).
+* Run `bash scripts/test_release.sh` to verify all 12 test steps pass 100%.
+* Run `bash scripts/build_release.sh` and verify `checksums.txt` and `RELEASE_NOTES.md` are generated.
+* Decide the next roadmap target (e.g., PTY overlays, Windows support, or package manager distribution).
 
 ## Secondary Priority
 
+* Publish first GitHub Release using `RELEASE_NOTES.md` and tarball assets.
+* Consider adding curl installer (`curl -sSf ... | bash`) for direct-from-GitHub installs.
 * Consider wiring daemon behavior to config.toml in a future phase; daemon currently reads environment variables.
 * Continue hardening service lifecycle and cleanup observability.
-* Preserve existing IPC, DB, and daemon boundaries while adding future features.
+* Keep native Windows validation blocked until MSVC Build Tools or a working 64-bit MinGW toolchain is installed.
 
 ## Deferred
 
-* semantic embeddings model loading (weights/inference)
+* curl-based remote installer
+* package managers (apt, brew, nix)
 * PTY overlay
 * enterprise synchronization
+* Windows-native distribution
 
 ---
 
@@ -2086,4 +2091,154 @@ Implemented distribution and installation workflow so users can install and use 
 - Phase 15F: Test on clean Linux/WSL machine
 - Future: GitHub Releases auto-download for `ggnmem upgrade`
 - Future: Windows-native support (deferred per user directive)
+
+---
+
+Session: 2026-06-11
+
+### Phase 16 — AI UX & Observability
+
+Implemented UX improvements for AI embeddings, including a guided setup wizard, a diagnostic doctor command for AI, daemon startup health checks, and model aliasing.
+
+#### Part A — AI Setup Wizard
+- **`ggnmem-cli/src/main.rs`**: Added `ggnmem ai setup` — a guided, interactive setup wizard.
+  - Walks users through 5 steps:
+    1. Select model (via alias or canonical name)
+    2. Download model files
+    3. Verify integrity (SHA256 checksums)
+    4. Reindex existing command history with embeddings
+    5. Test semantic search to confirm the pipeline works
+
+#### Part B — AI Doctor
+- **`ggnmem-cli/src/main.rs`**: Added `ggnmem ai doctor` — specialized diagnostics for the AI pipeline.
+  - Checks if model files exist on disk.
+  - Validates SHA256 checksums.
+  - Ensures the ONNX session loads successfully.
+  - Verifies embedding generation works on a test string.
+  - Checks if the vector database is initialized and healthy.
+
+#### Part C — Model Aliasing & Downloadability
+- **`ggnmem-ai/src/models.rs`**: 
+  - Added `resolve_alias()` to support friendly names like `minilm` instead of `all-MiniLM-L6-v2`.
+  - Added `downloadable` field to `ModelInfo` and the registry, allowing models like `bge-small-en-v1.5` to be listed but disabled for download ("Coming Soon").
+  - Updated `install()`, `remove()`, `needs_upgrade()`, and `verify_integrity()` to resolve aliases automatically.
+
+#### Part D — Startup Health Checks
+- **`ggnmem-cli/src/service.rs`**: Added `startup_health_check(pid, &log_file_path)` to `ggnmem start`.
+  - If the daemon crashes immediately after starting, it reads the last 10 lines of the daemon log and prints them to the console to help users diagnose the issue (e.g. port in use, DB locked).
+
+#### Files Modified
+- `ggnmem-ai/src/models.rs` — Added aliasing and downloadable flags, updated tests.
+- `ggnmem-cli/src/main.rs` — Added `ai_setup()` and `ai_doctor()`.
+- `ggnmem-cli/src/service.rs` — Added startup health check for the daemon.
+
+#### Architectural Decisions
+- Model aliases are resolved before any registry lookups or filesystem operations.
+- The `downloadable` flag prevents users from downloading models that are known to be incompatible or unoptimized in the current release.
+- Daemon crash logs are surfaced directly to the CLI so users don't have to manually locate and tail the log file.
+
+#### Next Steps
+- Continue refining AI pipeline stability.
+- Move towards Phase 17 distribution and release automation.
+
+---
+
+Session: 2026-06-12
+
+### Phase 17 — Distribution & Release Automation
+
+Implemented distribution and release automation to make ggnmem easy to distribute, upgrade, and install on another machine without Rust.
+
+#### Part 1 — Release Metadata (`build.rs`, `main.rs`)
+- **`ggnmem-cli/build.rs`**: Added two new compile-time env vars:
+  - `GGNMEM_RUSTC_VERSION` — Rust compiler version (e.g. `1.95.0`), captured via `rustc --version`
+  - `GGNMEM_TARGET_PLATFORM` — user-friendly platform string (e.g. `linux-x86_64`), derived from cargo's `TARGET` env var via new `target_to_platform()` function
+- **`ggnmem-cli/src/main.rs` — `version()`**: Reordered default output to match spec:
+  ```
+  Version:  0.3.0-alpha
+  Commit:   7d3437f
+  Build:    2026-06-12
+  Rust:     1.95.0
+  Platform: linux-x86_64
+  ONNX:     enabled
+  AI:       enabled
+  ```
+  - Moved Rust version and Platform from `--verbose` to default output.
+  - Moved Build profile to `--verbose` as `Profile:` field.
+  - AI status kept in default output per user decision (A).
+
+#### Part 2 — Release Packaging (`build_release.sh`)
+- **`scripts/build_release.sh`**: Enhanced with:
+  - SHA256 `checksums.txt` generation for all release files
+  - `checksums.txt` included inside the tarball
+  - Auto-generated `RELEASE_NOTES.md` with substituted version, commit, checksums, binary sizes
+  - Post-tarball integrity verification (extract + checksum match)
+  - Top-level `checksums.txt` for GitHub Release asset
+  - GitHub Release asset listing in summary output
+  - Rust version captured in VERSION file and summary
+
+#### Part 3 — Upgrade Command (`upgrade.rs`)
+- **`ggnmem-cli/src/upgrade.rs`**: Enhanced with:
+  - **Bundle validation**: SHA256 checksum verification from `checksums.txt` before replacing binaries
+  - **Rollback on failure**: restores `.old` backups if post-upgrade binary verification fails
+  - **Model preservation**: reports installed AI models in `~/.local/share/ggnmem/models/` with count
+  - Cleaner output with validation step shown before any destructive operations
+
+#### Part 4 — Installer (`install.sh`)
+- **`install.sh`**: Enhanced with:
+  - **Checksum verification**: validates `checksums.txt` (SHA256) before installing binaries with interactive abort option
+  - **Model preservation**: detects and reports installed AI models during upgrade with per-model sizes
+  - **Cleaner upgrade summary**: box-formatted old/new version comparison with preserved assets (config, database, models)
+
+#### Part 5 — Release Verification (`test_release.sh`)
+- **`scripts/test_release.sh`**: Expanded from 9 to 12 test steps:
+  - Step 1: Extract bundle + verify VERSION file fields (version, commit, date, arch)
+  - Step 2: Verify checksums.txt (SHA256 integrity)
+  - Step 3: Run install.sh
+  - Step 4: Start daemon
+  - Step 5: Run doctor
+  - Step 6: Version metadata — all 7 fields (Version, Commit, Build, Rust, Platform, ONNX, AI) + verbose mode (Profile, Binary)
+  - Step 7: TUI availability
+  - Step 8: Search (ingest + query)
+  - Step 9: AI setup check (ai status + ai models)
+  - Step 10: Semantic search
+  - Step 11: **Upgrade workflow** (full end-to-end: copy bundle → upgrade → verify)
+  - Step 12: Cleanup
+
+#### Part 6 — GitHub Release Readiness
+- **`scripts/RELEASE_TEMPLATE.md`** [NEW]: Markdown template for GitHub Release notes with placeholders (`__VERSION__`, `__COMMIT__`, `__TARBALL_SHA256__`, etc.)
+- `build_release.sh` generates filled-in `RELEASE_NOTES.md` from actual build values
+- Lists exact files for GitHub Release upload: tarball, checksums.txt, RELEASE_NOTES.md
+
+#### Files Modified
+- `ggnmem-cli/build.rs` — added `rustc_version()`, `target_to_platform()`, two new env vars
+- `ggnmem-cli/src/main.rs` — reordered `version()` default output, uses new compile-time env vars
+- `ggnmem-cli/src/upgrade.rs` — checksum validation, rollback, model preservation
+- `install.sh` — checksum verification, model preservation, upgrade summary
+- `scripts/build_release.sh` — checksums.txt, RELEASE_NOTES.md, integrity verification
+- `scripts/test_release.sh` — expanded to 12 test steps
+
+#### Files Created
+- `scripts/RELEASE_TEMPLATE.md`
+
+#### Architectural Decisions
+- Rust version captured at compile time via `rustc --version` in build.rs, not at runtime
+- Platform string derived from cargo's TARGET env var (e.g. `x86_64-unknown-linux-gnu` → `linux-x86_64`)
+- AI status kept in default `ggnmem version` output (user decision A) since it's useful diagnostics
+- Checksum verification uses `sha256sum` command (standard on Linux) — not a Rust dependency
+- Upgrade rollback is automatic: if new binary fails `ggnmem version` check, `.old` backups are restored
+- No GitHub API integration yet — releases uploaded manually using generated assets
+
+#### Verification
+- `cargo build --release` passes (clean build, 26.75s)
+- `ggnmem version` output matches spec exactly
+- `ggnmem version --verbose` shows extended diagnostics
+- No compiler warnings
+
+#### Next Steps
+- Run `bash scripts/build_release.sh` to generate full release bundle with checksums
+- Run `bash scripts/test_release.sh` for end-to-end verification
+- Test on a clean machine (friend installs from tarball without Rust)
+- Publish first GitHub Release using generated assets
+- Future: curl installer, package managers
 
