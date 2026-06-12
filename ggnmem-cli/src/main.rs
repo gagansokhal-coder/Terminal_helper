@@ -98,8 +98,10 @@ fn print_usage() {
     println!("  ai enable        Enable AI features");
     println!("  ai disable       Disable AI features");
     println!("  ai models        List available/installed models");
-    println!("  ai install M     Install an embedding model");
+    println!("  ai install [M]   Install an embedding model (interactive if no model given)");
     println!("  ai remove M      Remove an installed model");
+    println!("  ai setup         Guided AI setup wizard");
+    println!("  ai doctor        Run AI diagnostics");
     println!("  ai verify-model  Verify model loads and produces embeddings");
     println!("  ai reindex       Rebuild all embeddings");
     println!();
@@ -155,14 +157,16 @@ fn cmd_autostart(args: &[String]) -> Result<()> {
 fn cmd_ai(args: &[String]) -> Result<()> {
     match args.get(2).map(String::as_str) {
         Some("status") | None => ai_status(),
-        Some("enable") => ai_enable(),
+        Some("enable") => ai_enable(args),
         Some("disable") => ai_disable(),
         Some("models") => ai_models(),
         Some("install") => ai_install(args),
         Some("remove") => ai_remove(args),
+        Some("setup") => ai_setup(),
+        Some("doctor") => ai_doctor(),
         Some("verify-model") => ai_verify_model(args),
         Some("reindex") => ai_reindex(),
-        Some(sub) => bail!("unknown ai subcommand: {sub}\n\nusage:\n  ggnmem ai status\n  ggnmem ai enable\n  ggnmem ai disable\n  ggnmem ai models\n  ggnmem ai install <model>\n  ggnmem ai remove <model>\n  ggnmem ai verify-model\n  ggnmem ai reindex"),
+        Some(sub) => bail!("unknown ai subcommand: {sub}\n\nusage:\n  ggnmem ai status\n  ggnmem ai enable\n  ggnmem ai disable\n  ggnmem ai models\n  ggnmem ai install [model]\n  ggnmem ai remove <model>\n  ggnmem ai setup\n  ggnmem ai doctor\n  ggnmem ai verify-model\n  ggnmem ai reindex"),
     }
 }
 
@@ -175,6 +179,8 @@ fn version(args: &[String]) {
     let build_date = env!("GGNMEM_BUILD_DATE");
     let git_commit = env!("GGNMEM_GIT_COMMIT");
     let build_profile = env!("GGNMEM_BUILD_PROFILE");
+    let rustc_version = env!("GGNMEM_RUSTC_VERSION");
+    let platform = env!("GGNMEM_TARGET_PLATFORM");
 
     // AI enabled — read from config at runtime.
     let ai_enabled = config::load().map(|cfg| cfg.ai.ai_enabled).unwrap_or(false);
@@ -185,25 +191,23 @@ fn version(args: &[String]) {
     println!("ggnmem {version}");
     println!();
     println!("  Version:  {version}");
-    println!(
-        "  AI:       {}",
-        if ai_enabled { "enabled" } else { "disabled" }
-    );
+    println!("  Commit:   {git_commit}");
+    println!("  Build:    {build_date}");
+    println!("  Rust:     {rustc_version}");
+    println!("  Platform: {platform}");
     println!(
         "  ONNX:     {}",
         if onnx_enabled { "enabled" } else { "disabled" }
     );
-    println!("  Build:    {build_profile}");
-    println!("  Commit:   {git_commit}");
-    println!("  Date:     {build_date}");
+    println!(
+        "  AI:       {}",
+        if ai_enabled { "enabled" } else { "disabled" }
+    );
 
     if verbose {
         println!();
         println!("  ─── verbose ───");
-        println!(
-            "  Rust:     {}",
-            option_env!("RUSTC_VERSION").unwrap_or("unknown")
-        );
+        println!("  Profile:  {build_profile}");
         println!("  Target:   {}", std::env::consts::ARCH);
         println!("  OS:       {}", std::env::consts::OS);
         println!("  Family:   {}", std::env::consts::FAMILY);
@@ -1341,7 +1345,9 @@ fn ai_status() -> Result<()> {
     Ok(())
 }
 
-fn ai_enable() -> Result<()> {
+fn ai_enable(args: &[String]) -> Result<()> {
+    let no_install = has_flag(args, "--no-install");
+
     let mut cfg = config::load()?;
     cfg.ai.ai_enabled = true;
     cfg.ai.semantic_search = true;
@@ -1354,13 +1360,29 @@ fn ai_enable() -> Result<()> {
 
     // Auto-initialize vector DB if model is installed.
     let ai_cfg = build_ai_config(&cfg);
-    let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir);
+    let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir.clone());
     if mgr.is_installed(&cfg.ai.model_name) {
         let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path);
         if let Err(e) = store.ensure_initialized() {
             eprintln!("  warning: could not initialize vector db: {e}");
         } else {
             println!("  \u{2713} vector db initialized");
+        }
+    } else if !no_install {
+        // Model not installed — offer to install the recommended model.
+        println!();
+        println!("  AI model not installed.");
+        eprint!("  Install recommended model now? [Y/n] ");
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let answer = input.trim().to_lowercase();
+
+        if answer.is_empty() || answer == "y" || answer == "yes" {
+            println!();
+            do_model_install(&cfg.ai.model_name, &ai_cfg.models_dir, &ai_cfg.vector_db_path, true)?;
+        } else {
+            println!("  skipped. Install later with: ggnmem ai install");
         }
     }
     Ok(())
@@ -1392,6 +1414,8 @@ fn ai_models() -> Result<()> {
     for model in &models {
         let status = if model.installed {
             "\u{2713} installed"
+        } else if !model.downloadable {
+            "  coming soon"
         } else {
             "  available"
         };
@@ -1402,6 +1426,9 @@ fn ai_models() -> Result<()> {
         };
         println!("  {} {}{}", status, model.name, active);
         println!("    {}", model.description);
+        if !model.downloadable {
+            println!("    \u{26a0} not yet available for download in this release");
+        }
         println!(
             "    dimensions: {}  size: ~{}",
             model.dimensions,
@@ -1419,30 +1446,84 @@ fn ai_models() -> Result<()> {
     }
 
     println!("  models dir: {}", ai_cfg.models_dir.display());
+    println!();
+    println!("  aliases: minilm, mini, bge, bge-small");
     Ok(())
 }
 
 fn ai_install(args: &[String]) -> Result<()> {
-    let model_name = args
-        .get(3)
-        .map(String::as_str)
-        .unwrap_or("all-MiniLM-L6-v2");
+    let explicit_model = args.get(3).map(String::as_str);
 
     let cfg = config::load()?;
     let ai_cfg = build_ai_config(&cfg);
-    let vector_db_path = ai_cfg.vector_db_path.clone();
-    let models_dir = ai_cfg.models_dir.clone();
-    let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir);
+
+    // If no model name given, show interactive selection menu.
+    let model_name = match explicit_model {
+        Some(name) => {
+            // Resolve alias (Part D).
+            ggnmem_ai::resolve_alias(name)
+        }
+        None => {
+            // Interactive model selection (Part A).
+            select_model_interactive()?
+        }
+    };
+
+    do_model_install(&model_name, &ai_cfg.models_dir, &ai_cfg.vector_db_path, cfg.ai.ai_enabled)
+}
+
+/// Interactive model selection menu.
+///
+/// Displays available models with descriptions and lets the user pick one.
+/// Returns the canonical model name.
+fn select_model_interactive() -> Result<String> {
+    println!("ggnmem ai install");
+    println!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
+    println!();
+    println!("  Select a model to install:");
+    println!();
+    println!("  1. MiniLM (Recommended, ~80 MB)");
+    println!("     all-MiniLM-L6-v2 — fast, accurate, 384 dimensions");
+    println!();
+    println!("  2. BGE Small (Coming Soon, ~130 MB)");
+    println!("     bge-small-en-v1.5 — not yet available in this release");
+    println!();
+    eprint!("  Select model [1]: ");
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let choice = input.trim();
+
+    match choice {
+        "" | "1" => Ok("all-MiniLM-L6-v2".to_owned()),
+        "2" => {
+            bail!("BGE Small is not yet available for download in this release.\nUse MiniLM (option 1) or wait for a future release.");
+        }
+        other => bail!("invalid selection: {other}. Choose 1 or 2."),
+    }
+}
+
+/// Shared model installation logic used by ai_install, ai_enable, and ai_setup.
+///
+/// Handles: download → verify → ONNX load test → vector DB init → optional reindex.
+fn do_model_install(
+    model_name: &str,
+    models_dir: &std::path::Path,
+    vector_db_path: &std::path::Path,
+    ai_enabled: bool,
+) -> Result<()> {
+    let canonical = ggnmem_ai::resolve_alias(model_name);
+    let mgr = ggnmem_ai::ModelManager::new(models_dir.to_path_buf());
 
     // Detect marker-only installs that need upgrading to real ONNX files.
-    let upgrading = mgr.needs_upgrade(model_name);
+    let upgrading = mgr.needs_upgrade(&canonical);
     if upgrading {
-        println!("  upgrading model '{model_name}' from marker to real ONNX files...");
+        println!("  upgrading model '{canonical}' from marker to real ONNX files...");
     } else {
-        println!("  installing model '{model_name}'...");
+        println!("  installing model '{canonical}'...");
     }
 
-    match mgr.install(model_name, |downloaded, total| {
+    match mgr.install(&canonical, |downloaded, total| {
         if let Some(pct) = (downloaded * 100).checked_div(total) {
             eprint!(
                 "\r  downloading: {} / {} ({pct}%)",
@@ -1477,22 +1558,42 @@ fn ai_install(args: &[String]) -> Result<()> {
                     .unwrap()
                     .to_path_buf(),
             );
-            match mgr2.verify_integrity(model_name) {
+            match mgr2.verify_integrity(&canonical) {
                 Ok(()) => println!("  \u{2713} integrity verified"),
                 Err(e) => eprintln!("  \u{26a0} integrity warning: {e}"),
             }
 
             // Post-install verification: load model through ort and produce
             // one real embedding to prove the full pipeline works.
-            verify_model_loads(&models_dir, model_name);
+            verify_model_loads(models_dir, &canonical);
 
             // Auto-initialize vector DB if AI is enabled.
-            if cfg.ai.ai_enabled {
-                let store = ggnmem_ai::VectorStore::new(vector_db_path);
+            if ai_enabled {
+                let store = ggnmem_ai::VectorStore::new(vector_db_path.to_path_buf());
                 if let Err(e) = store.ensure_initialized() {
                     eprintln!("  warning: could not initialize vector db: {e}");
                 } else {
                     println!("  \u{2713} vector db initialized");
+                }
+
+                // Auto-reindex if database exists.
+                let db_path = default_db_path();
+                if db_path.exists() {
+                    println!("  reindexing embeddings...");
+                    let (provider, _) = ggnmem_ai::create_provider(models_dir, &canonical);
+                    let store2 = ggnmem_ai::VectorStore::new(vector_db_path.to_path_buf());
+                    let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store2);
+                    match ggnmem_ai::indexer::index_all_commands(&db_path, &pipeline, |done, total| {
+                        if total > 0 {
+                            eprint!("\r  indexed: {done} / {total}");
+                        }
+                    }) {
+                        Ok(count) => {
+                            eprintln!();
+                            println!("  \u{2713} indexed {count} commands");
+                        }
+                        Err(e) => eprintln!("\n  \u{26a0} reindex warning: {e}"),
+                    }
                 }
             }
             Ok(())
@@ -1661,6 +1762,314 @@ fn ai_reindex() -> Result<()> {
         }
         Err(e) => bail!("reindex failed: {e}"),
     }
+}
+
+// ─── AI Setup Wizard (Phase 16C) ─────────────────────────────────────────────
+
+/// `ggnmem ai setup` — guided AI setup wizard.
+///
+/// Walks the user through a 5-step process:
+///   1. Choose model
+///   2. Download
+///   3. Verify
+///   4. Reindex embeddings
+///   5. Test semantic search
+fn ai_setup() -> Result<()> {
+    println!("ggnmem ai setup");
+    println!("─────────────────────────────────");
+    println!("  AI Setup Wizard");
+    println!();
+
+    // ── Step 1: Choose model ──
+    println!("  Step 1/5: Choose model");
+    println!();
+    println!("  1. MiniLM (Recommended, ~80 MB)");
+    println!("     all-MiniLM-L6-v2 — fast, accurate, 384 dimensions");
+    println!();
+    println!("  2. BGE Small (Coming Soon, ~130 MB)");
+    println!("     bge-small-en-v1.5 — not yet available in this release");
+    println!();
+    eprint!("  Select model [1]: ");
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let choice = input.trim();
+
+    let model_name = match choice {
+        "" | "1" => "all-MiniLM-L6-v2",
+        "2" => {
+            println!();
+            println!("  ✗ BGE Small is not yet available for download in this release.");
+            println!("    Selecting MiniLM instead.");
+            "all-MiniLM-L6-v2"
+        }
+        other => bail!("invalid selection: {other}. Choose 1 or 2."),
+    };
+
+    println!();
+    println!("  ✓ Selected: {model_name}");
+
+    // Enable AI in config.
+    let mut cfg = config::load()?;
+    cfg.ai.ai_enabled = true;
+    cfg.ai.semantic_search = true;
+    cfg.features.ai = true;
+    cfg.ai.model_name = model_name.to_owned();
+    config::save(&cfg)?;
+    println!("  ✓ AI features enabled in config");
+
+    let ai_cfg = build_ai_config(&cfg);
+    let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir.clone());
+
+    // ── Step 2: Download ──
+    println!();
+    println!("  Step 2/5: Download");
+
+    if mgr.is_installed(model_name) && mgr.has_real_model_files(model_name) {
+        println!("  ✓ Model already installed");
+    } else {
+        do_model_install(
+            model_name,
+            &ai_cfg.models_dir,
+            &ai_cfg.vector_db_path,
+            false, // We'll handle reindex ourselves in step 4
+        )?;
+    }
+
+    // ── Step 3: Verify ──
+    println!();
+    println!("  Step 3/5: Verify");
+
+    match mgr.verify_integrity(model_name) {
+        Ok(()) => println!("  ✓ SHA256 integrity verified"),
+        Err(e) => eprintln!("  ⚠ integrity warning: {e}"),
+    }
+
+    verify_model_loads(&ai_cfg.models_dir, model_name);
+
+    // ── Step 4: Reindex ──
+    println!();
+    println!("  Step 4/5: Reindex embeddings");
+
+    let db_path = default_db_path();
+    if db_path.exists() {
+        let (provider, provider_name) =
+            ggnmem_ai::create_provider(&ai_cfg.models_dir, model_name);
+        let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path.clone());
+        let _ = store.ensure_initialized();
+        let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store);
+
+        println!("  provider: {provider_name}");
+
+        match ggnmem_ai::indexer::index_all_commands(&db_path, &pipeline, |done, total| {
+            if total > 0 {
+                eprint!("\r  indexed: {done} / {total}");
+            }
+        }) {
+            Ok(count) => {
+                eprintln!();
+                if count > 0 {
+                    println!("  ✓ indexed {count} commands");
+                } else {
+                    println!("  ✓ all commands already indexed");
+                }
+            }
+            Err(e) => eprintln!("  ⚠ reindex warning: {e}"),
+        }
+    } else {
+        println!("  — database not found (start daemon first to capture commands)");
+        println!("    embeddings will be built as commands are captured");
+    }
+
+    // ── Step 5: Test semantic search ──
+    println!();
+    println!("  Step 5/5: Test semantic search");
+
+    if db_path.exists() {
+        let (provider, _) = ggnmem_ai::create_provider(&ai_cfg.models_dir, model_name);
+        let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path.clone());
+        let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store);
+
+        let test_query = "list files";
+        match pipeline.search_embedding(test_query, 3) {
+            Ok(matches) => {
+                if matches.is_empty() {
+                    println!("  ✓ semantic search operational (no results yet — capture some commands first)");
+                } else {
+                    println!("  ✓ semantic search operational — {} result(s) for '{test_query}':", matches.len());
+
+                    // Show top results with command text from DB.
+                    let database =
+                        ggnmem_db::Database::open(&ggnmem_db::DatabaseConfig::new(db_path))?;
+                    for (i, m) in matches.iter().take(3).enumerate() {
+                        if let Ok(Some(cmd)) = database.get_command_by_id(&m.id) {
+                            let sim = (1.0 - m.distance as f64) * 100.0;
+                            println!("    {}. [{:.0}%] {}", i + 1, sim, cmd.command);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("  ⚠ semantic search test failed: {e}");
+                eprintln!("    try: ggnmem ai reindex");
+            }
+        }
+    } else {
+        println!("  — skipped (no database yet)");
+    }
+
+    println!();
+    println!("─────────────────────────────────");
+    println!("  ✓ AI setup complete!");
+    println!();
+    println!("  Next steps:");
+    println!("    ggnmem start        Start the daemon");
+    println!("    ggnmem search       Search with hybrid FTS + semantic");
+    println!("    ggnmem ai status    Check AI status");
+
+    Ok(())
+}
+
+// ─── AI Doctor (Phase 16G) ───────────────────────────────────────────────────
+
+/// `ggnmem ai doctor` — run AI diagnostic checks.
+///
+/// Checks:
+///   1. Model files exist on disk
+///   2. SHA256 checksums valid
+///   3. ONNX session loads
+///   4. Embedding generation works
+///   5. Vector DB is healthy
+fn ai_doctor() -> Result<()> {
+    println!("ggnmem ai doctor");
+    println!("─────────────────────────────────");
+    println!();
+
+    let cfg = config::load()?;
+    let ai_cfg = build_ai_config(&cfg);
+    let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir.clone());
+
+    let model_name = &cfg.ai.model_name;
+    let mut all_ok = true;
+
+    // ── Check 1: Model files exist ──
+    print!("  1. model exists       ... ");
+    if mgr.is_installed(model_name) {
+        let size = mgr
+            .model_size(model_name)
+            .map(format_bytes)
+            .unwrap_or_else(|| "—".to_owned());
+        println!("✓ {model_name} ({size})");
+    } else {
+        println!("✗ model '{model_name}' not installed");
+        println!("    install with: ggnmem ai install");
+        all_ok = false;
+    }
+
+    let has_real = mgr.has_real_model_files(model_name);
+    print!("     ONNX files         ... ");
+    if has_real {
+        println!("✓ model.onnx + tokenizer.json");
+    } else if mgr.needs_upgrade(model_name) {
+        println!("⚠ marker only (needs upgrade: ggnmem ai install)");
+        all_ok = false;
+    } else if !mgr.is_installed(model_name) {
+        println!("— not installed");
+    } else {
+        println!("✗ missing");
+        all_ok = false;
+    }
+
+    // ── Check 2: Checksum valid ──
+    print!("  2. checksum valid     ... ");
+    if mgr.is_installed(model_name) {
+        match mgr.verify_integrity(model_name) {
+            Ok(()) => println!("✓ SHA256 verified"),
+            Err(e) => {
+                println!("✗ {e}");
+                all_ok = false;
+            }
+        }
+    } else {
+        println!("— skipped (not installed)");
+    }
+
+    // ── Check 3: ONNX loads ──
+    print!("  3. ONNX loads         ... ");
+    if has_real {
+        let (provider, provider_name) =
+            ggnmem_ai::create_provider(&ai_cfg.models_dir, model_name);
+
+        if provider_name.contains("fallback") || provider_name.contains("N-gram") {
+            println!("⚠ fell back to {provider_name}");
+            all_ok = false;
+        } else {
+            println!("✓ {provider_name}");
+
+            // ── Check 4: Embedding generation ──
+            print!("  4. embedding works    ... ");
+            let test_phrase = "docker compose up";
+            match provider.embed_query(test_phrase) {
+                Ok(embedding) if !embedding.is_empty() => {
+                    let dims = embedding.len();
+                    let magnitude: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+
+                    if dims == 384 && (magnitude - 1.0).abs() < 0.05 {
+                        println!("✓ {dims}d, magnitude={magnitude:.4}");
+                    } else {
+                        println!("⚠ {dims}d, magnitude={magnitude:.4} (expected 384d, ~1.0)");
+                        all_ok = false;
+                    }
+                }
+                Ok(_) => {
+                    println!("✗ produced empty embedding");
+                    all_ok = false;
+                }
+                Err(e) => {
+                    println!("✗ {e}");
+                    all_ok = false;
+                }
+            }
+        }
+    } else {
+        println!("— skipped (no ONNX files)");
+        println!("  4. embedding works    ... — skipped");
+    }
+
+    // ── Check 5: Vector DB healthy ──
+    print!("  5. vector DB healthy  ... ");
+    let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path.clone());
+    if store.is_initialized() {
+        match store.count() {
+            Ok(count) => println!("✓ initialized ({count} vectors)"),
+            Err(e) => {
+                println!("✗ count failed: {e}");
+                all_ok = false;
+            }
+        }
+    } else {
+        // Try to initialize.
+        match store.ensure_initialized() {
+            Ok(()) => {
+                let count = store.count().unwrap_or(0);
+                println!("✓ initialized ({count} vectors)");
+            }
+            Err(e) => {
+                println!("✗ initialization failed: {e}");
+                all_ok = false;
+            }
+        }
+    }
+
+    println!();
+    println!("─────────────────────────────────");
+    if all_ok {
+        println!("  ✓ all checks passed");
+    } else {
+        println!("  ✗ some checks failed — review above");
+    }
+
+    Ok(())
 }
 
 // ─── Semantic search (CLI-direct, no daemon needed) ──────────────────────────

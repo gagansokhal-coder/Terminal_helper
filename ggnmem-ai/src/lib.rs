@@ -28,7 +28,7 @@ pub use embedding::{
 };
 pub use error::{AiError, AiResult};
 pub use indexer::IndexProgress;
-pub use models::{ModelInfo, ModelManager};
+pub use models::{resolve_alias, ModelInfo, ModelManager};
 #[cfg(feature = "onnx")]
 pub use onnx::MiniLmEmbeddingProvider;
 pub use vector::{VectorMatch, VectorStore};

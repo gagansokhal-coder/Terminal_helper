@@ -26,6 +26,8 @@ pub struct ModelInfo {
     pub size_bytes: u64,
     /// Embedding output dimensions.
     pub dimensions: usize,
+    /// Whether the model is available for download in this release.
+    pub downloadable: bool,
     /// Whether the model is currently installed.
     pub installed: bool,
     /// Disk path if installed.
@@ -40,6 +42,8 @@ struct ModelRegistryEntry {
     description: &'static str,
     size_bytes: u64,
     dimensions: usize,
+    /// Whether this model is available for download in the current release.
+    downloadable: bool,
     /// Hugging Face download URLs for model assets.
     #[cfg(feature = "onnx")]
     assets: &'static [ModelAsset],
@@ -71,6 +75,7 @@ const MODEL_REGISTRY: &[ModelRegistryEntry] = &[
         description: "Sentence-Transformers all-MiniLM-L6-v2 (ONNX, ~80 MB)",
         size_bytes: 80_000_000,
         dimensions: 384,
+        downloadable: true,
         #[cfg(feature = "onnx")]
         assets: &[
             ModelAsset {
@@ -90,10 +95,36 @@ const MODEL_REGISTRY: &[ModelRegistryEntry] = &[
         description: "BAAI bge-small-en-v1.5 (ONNX, ~130 MB)",
         size_bytes: 130_000_000,
         dimensions: 384,
+        downloadable: false, // Coming soon — not yet available for download
         #[cfg(feature = "onnx")]
-        assets: &[], // Not yet supported for download
+        assets: &[],
     },
 ];
+
+/// Short alias mappings for model names.
+/// Each entry is (alias, canonical_name). Case-insensitive matching is applied.
+const MODEL_ALIASES: &[(&str, &str)] = &[
+    ("minilm", "all-MiniLM-L6-v2"),
+    ("mini", "all-MiniLM-L6-v2"),
+    ("minilm-l6", "all-MiniLM-L6-v2"),
+    ("bge", "bge-small-en-v1.5"),
+    ("bge-small", "bge-small-en-v1.5"),
+];
+
+/// Resolve a model alias to its canonical registry name.
+///
+/// Performs case-insensitive matching against known aliases.
+/// Returns the canonical name if a match is found, or the original input otherwise.
+pub fn resolve_alias(name: &str) -> String {
+    let lower = name.to_lowercase();
+    for &(alias, canonical) in MODEL_ALIASES {
+        if lower == alias {
+            return canonical.to_owned();
+        }
+    }
+    // No alias matched — return as-is.
+    name.to_owned()
+}
 
 const MODEL_MARKER_FILE: &str = ".ggnmem-model";
 
@@ -127,6 +158,7 @@ impl ModelManager {
                     description: entry.description.to_owned(),
                     size_bytes: entry.size_bytes,
                     dimensions: entry.dimensions,
+                    downloadable: entry.downloadable,
                     installed,
                     install_path: if installed { Some(model_dir) } else { None },
                     disk_size_bytes: disk_size,
@@ -144,23 +176,32 @@ impl ModelManager {
     }
 
     /// Check if a specific model is installed.
+    ///
+    /// Accepts aliases (e.g. "minilm" → "all-MiniLM-L6-v2").
     #[must_use]
     pub fn is_installed(&self, name: &str) -> bool {
-        let model_dir = self.models_dir.join(name);
+        let canonical = resolve_alias(name);
+        let model_dir = self.models_dir.join(&canonical);
         is_model_dir_valid(&model_dir)
     }
 
     /// Get info about a specific model (must be in registry).
+    ///
+    /// Accepts aliases (e.g. "minilm" → "all-MiniLM-L6-v2").
     pub fn get_model(&self, name: &str) -> AiResult<ModelInfo> {
+        let canonical = resolve_alias(name);
         self.list_available()
             .into_iter()
-            .find(|m| m.name == name)
+            .find(|m| m.name == canonical)
             .ok_or_else(|| AiError::UnknownModel(name.to_owned()))
     }
 
     /// Get the disk size of an installed model in bytes.
+    ///
+    /// Accepts aliases.
     pub fn model_size(&self, name: &str) -> Option<u64> {
-        let model_dir = self.models_dir.join(name);
+        let canonical = resolve_alias(name);
+        let model_dir = self.models_dir.join(&canonical);
         if is_model_dir_valid(&model_dir) {
             dir_size(&model_dir).ok()
         } else {
@@ -169,9 +210,12 @@ impl ModelManager {
     }
 
     /// Check if real ONNX model files exist for a model.
+    ///
+    /// Accepts aliases.
     #[must_use]
     pub fn has_real_model_files(&self, name: &str) -> bool {
-        let model_dir = self.models_dir.join(name);
+        let canonical = resolve_alias(name);
+        let model_dir = self.models_dir.join(&canonical);
         has_onnx_files(&model_dir)
     }
 
@@ -181,11 +225,27 @@ impl ModelManager {
     /// Returns `true` when the model directory exists with a marker but
     /// without `model.onnx` — meaning it was installed in a previous
     /// phase (or without the `onnx` feature) and needs re-downloading.
+    ///
+    /// Accepts aliases.
     #[must_use]
     pub fn needs_upgrade(&self, name: &str) -> bool {
-        let model_dir = self.models_dir.join(name);
+        let canonical = resolve_alias(name);
+        let model_dir = self.models_dir.join(&canonical);
         // Has marker but no real ONNX files.
         model_dir.join(MODEL_MARKER_FILE).exists() && !has_onnx_files(&model_dir)
+    }
+
+    /// Check if a model is available for download in the current release.
+    ///
+    /// Accepts aliases.
+    #[must_use]
+    pub fn is_downloadable(&self, name: &str) -> bool {
+        let canonical = resolve_alias(name);
+        MODEL_REGISTRY
+            .iter()
+            .find(|e| e.name == canonical)
+            .map(|e| e.downloadable)
+            .unwrap_or(false)
     }
 
     /// Install a model.
@@ -197,13 +257,24 @@ impl ModelManager {
     ///
     /// `progress` callback receives `(bytes_downloaded, total_bytes)`.
     pub fn install(&self, name: &str, mut progress: impl FnMut(u64, u64)) -> AiResult<ModelInfo> {
+        // Resolve alias to canonical name.
+        let canonical = resolve_alias(name);
+
         // Validate the model exists in registry.
         let entry = MODEL_REGISTRY
             .iter()
-            .find(|e| e.name == name)
+            .find(|e| e.name == canonical)
             .ok_or_else(|| AiError::UnknownModel(name.to_owned()))?;
 
-        let model_dir = self.models_dir.join(name);
+        // Check if the model is available for download.
+        if !entry.downloadable {
+            return Err(AiError::ModelDownloadError(format!(
+                "model '{}' is not yet available for download in this release",
+                canonical
+            )));
+        }
+
+        let model_dir = self.models_dir.join(&canonical);
 
         // Check if already fully installed with real ONNX files.
         if has_onnx_files(&model_dir) {
@@ -262,6 +333,7 @@ impl ModelManager {
             description: entry.description.to_owned(),
             size_bytes: entry.size_bytes,
             dimensions: entry.dimensions,
+            downloadable: entry.downloadable,
             installed: true,
             install_path: Some(model_dir),
             disk_size_bytes: disk_size,
@@ -269,13 +341,17 @@ impl ModelManager {
     }
 
     /// Remove an installed model by deleting its directory.
+    ///
+    /// Accepts aliases.
     pub fn remove(&self, name: &str) -> AiResult<()> {
+        let canonical = resolve_alias(name);
+
         // Validate the model exists in registry.
-        if !MODEL_REGISTRY.iter().any(|e| e.name == name) {
+        if !MODEL_REGISTRY.iter().any(|e| e.name == canonical) {
             return Err(AiError::UnknownModel(name.to_owned()));
         }
 
-        let model_dir = self.models_dir.join(name);
+        let model_dir = self.models_dir.join(&canonical);
 
         if !is_model_dir_valid(&model_dir) {
             return Err(AiError::ModelNotInstalled(name.to_owned()));
@@ -291,7 +367,8 @@ impl ModelManager {
     /// With the `onnx` feature, also verifies SHA256 hashes against
     /// stored values.
     pub fn verify_integrity(&self, name: &str) -> AiResult<()> {
-        let model_dir = self.models_dir.join(name);
+        let canonical = resolve_alias(name);
+        let model_dir = self.models_dir.join(&canonical);
 
         if !model_dir.exists() {
             return Err(AiError::ModelNotInstalled(name.to_owned()));
@@ -568,10 +645,10 @@ mod tests {
 
             assert!(mgr.list_installed().is_empty());
 
-            mgr.install("bge-small-en-v1.5", |_, _| {}).unwrap();
+            mgr.install("all-MiniLM-L6-v2", |_, _| {}).unwrap();
             let installed = mgr.list_installed();
             assert_eq!(installed.len(), 1);
-            assert_eq!(installed[0].name, "bge-small-en-v1.5");
+            assert_eq!(installed[0].name, "all-MiniLM-L6-v2");
         }
     }
 
@@ -622,5 +699,101 @@ mod tests {
         // SHA256("hello world\n") is a known value.
         assert_eq!(hash.len(), 64); // 256 bits = 64 hex chars
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    // ─── Alias resolution tests ──────────────────────────────────────────
+
+    #[test]
+    fn resolve_alias_maps_known_aliases() {
+        assert_eq!(resolve_alias("minilm"), "all-MiniLM-L6-v2");
+        assert_eq!(resolve_alias("mini"), "all-MiniLM-L6-v2");
+        assert_eq!(resolve_alias("minilm-l6"), "all-MiniLM-L6-v2");
+        assert_eq!(resolve_alias("bge"), "bge-small-en-v1.5");
+        assert_eq!(resolve_alias("bge-small"), "bge-small-en-v1.5");
+    }
+
+    #[test]
+    fn resolve_alias_is_case_insensitive() {
+        assert_eq!(resolve_alias("MiniLM"), "all-MiniLM-L6-v2");
+        assert_eq!(resolve_alias("MINILM"), "all-MiniLM-L6-v2");
+        assert_eq!(resolve_alias("BGE"), "bge-small-en-v1.5");
+        assert_eq!(resolve_alias("Bge-Small"), "bge-small-en-v1.5");
+    }
+
+    #[test]
+    fn resolve_alias_passes_through_canonical_names() {
+        // Full canonical names should pass through unchanged.
+        assert_eq!(resolve_alias("all-MiniLM-L6-v2"), "all-MiniLM-L6-v2");
+        assert_eq!(resolve_alias("bge-small-en-v1.5"), "bge-small-en-v1.5");
+    }
+
+    #[test]
+    fn resolve_alias_passes_through_unknown() {
+        assert_eq!(resolve_alias("nonexistent-model"), "nonexistent-model");
+        assert_eq!(resolve_alias("random"), "random");
+    }
+
+    #[test]
+    fn is_installed_works_with_aliases() {
+        #[cfg(not(feature = "onnx"))]
+        {
+            let tmp = TempDir::new().unwrap();
+            let mgr = ModelManager::new(tmp.path().to_path_buf());
+
+            mgr.install("all-MiniLM-L6-v2", |_, _| {}).unwrap();
+            assert!(mgr.is_installed("minilm"));
+            assert!(mgr.is_installed("mini"));
+            assert!(mgr.is_installed("all-MiniLM-L6-v2"));
+        }
+    }
+
+    #[test]
+    fn install_via_alias_works() {
+        #[cfg(not(feature = "onnx"))]
+        {
+            let tmp = TempDir::new().unwrap();
+            let mgr = ModelManager::new(tmp.path().to_path_buf());
+
+            let info = mgr.install("minilm", |_, _| {}).unwrap();
+            assert_eq!(info.name, "all-MiniLM-L6-v2");
+            assert!(mgr.is_installed("all-MiniLM-L6-v2"));
+        }
+    }
+
+    #[test]
+    fn downloadable_flag_reported_correctly() {
+        let tmp = TempDir::new().unwrap();
+        let mgr = ModelManager::new(tmp.path().to_path_buf());
+        let models = mgr.list_available();
+
+        // MiniLM should be downloadable.
+        let minilm = models.iter().find(|m| m.name == "all-MiniLM-L6-v2").unwrap();
+        assert!(minilm.downloadable);
+
+        // BGE Small should NOT be downloadable (Coming Soon).
+        let bge = models.iter().find(|m| m.name == "bge-small-en-v1.5").unwrap();
+        assert!(!bge.downloadable);
+    }
+
+    #[test]
+    fn is_downloadable_via_alias() {
+        let tmp = TempDir::new().unwrap();
+        let mgr = ModelManager::new(tmp.path().to_path_buf());
+
+        assert!(mgr.is_downloadable("minilm"));
+        assert!(mgr.is_downloadable("all-MiniLM-L6-v2"));
+        assert!(!mgr.is_downloadable("bge"));
+        assert!(!mgr.is_downloadable("bge-small-en-v1.5"));
+    }
+
+    #[test]
+    fn install_non_downloadable_model_fails() {
+        let tmp = TempDir::new().unwrap();
+        let mgr = ModelManager::new(tmp.path().to_path_buf());
+
+        let result = mgr.install("bge-small-en-v1.5", |_, _| {});
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not yet available"), "error was: {err}");
     }
 }

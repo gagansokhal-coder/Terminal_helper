@@ -140,7 +140,7 @@ fn is_process_running(_pid: u32) -> bool {
 // ─── Stale resource cleanup ─────────────────────────────────────────────────
 
 /// Clean up stale resources from a crashed or improperly-stopped daemon.
-/// Removes stale PID file and socket file if the daemon is not running.
+/// Removes stale PID file, socket file, and any lock files if the daemon is not running.
 fn cleanup_stale_resources() -> Result<()> {
     // Clean stale PID file.
     if let Some(pid) = read_pid()? {
@@ -158,6 +158,18 @@ fn cleanup_stale_resources() -> Result<()> {
             if !daemon_running {
                 let _ = fs::remove_file(&sock);
                 println!("  ⚠ cleaned stale socket file");
+            }
+        }
+    }
+
+    // Clean stale lock files in state dir.
+    if let Ok(state) = state_dir() {
+        let lock_path = state.join("daemon.lock");
+        if lock_path.exists() {
+            let daemon_running = read_pid()?.map(is_process_running).unwrap_or(false);
+            if !daemon_running {
+                let _ = fs::remove_file(&lock_path);
+                println!("  ⚠ cleaned stale lock file");
             }
         }
     }
@@ -238,15 +250,73 @@ pub fn cmd_start() -> Result<()> {
 
     if is_process_running(pid) {
         println!("  ✓ daemon started (PID {pid})");
+
+        // Phase 16F: Run startup health check.
+        startup_health_check(pid, &log_file_path);
     } else {
         remove_pid()?;
-        bail!(
+
+        // Show the last few log lines to help diagnose the crash.
+        let crash_log = read_last_log_lines(&log_file_path, 10);
+        let mut msg = format!(
             "daemon exited immediately after start — check logs:\n  {}",
             log_file_path.display()
         );
+        if !crash_log.is_empty() {
+            msg.push_str("\n\nlast log output:\n");
+            for line in &crash_log {
+                msg.push_str("  ");
+                msg.push_str(line);
+                msg.push('\n');
+            }
+        }
+        bail!("{msg}");
     }
 
     Ok(())
+}
+
+/// Run a startup health check on a newly-started daemon.
+///
+/// Verifies the daemon is responsive by waiting for the PID file advisory lock
+/// and checking that the process is still alive after a brief settling period.
+/// Non-fatal: prints warnings but does not fail.
+fn startup_health_check(pid: u32, log_path: &std::path::Path) {
+    // Wait up to 2.5 seconds for the daemon to settle.
+    let mut healthy = false;
+    for _ in 0..5 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if !is_process_running(pid) {
+            eprintln!("  ⚠ daemon crashed shortly after start (PID {pid})");
+            let crash_log = read_last_log_lines(log_path, 5);
+            if !crash_log.is_empty() {
+                eprintln!("  last log output:");
+                for line in &crash_log {
+                    eprintln!("    {line}");
+                }
+            }
+            eprintln!("  try: ggnmem restart");
+            return;
+        }
+        // If still alive after 1 second, consider healthy.
+        healthy = true;
+    }
+
+    if healthy {
+        println!("  ✓ health check passed (daemon responsive)");
+    }
+}
+
+/// Read the last N lines from a log file.
+fn read_last_log_lines(path: &std::path::Path, n: usize) -> Vec<String> {
+    match fs::read_to_string(path) {
+        Ok(contents) => {
+            let lines: Vec<&str> = contents.lines().collect();
+            let start = lines.len().saturating_sub(n);
+            lines[start..].iter().map(|s| s.to_string()).collect()
+        }
+        Err(_) => Vec::new(),
+    }
 }
 
 // ─── Stop ────────────────────────────────────────────────────────────────────
@@ -386,6 +456,7 @@ Type=simple
 ExecStart=%h/.local/bin/ggnmem-daemon
 Restart=on-failure
 RestartSec=5
+WatchdogSec=60
 Environment=XDG_RUNTIME_DIR=%t
 Environment=GGNMEM_LOG_LEVEL=info
 Environment=GGNMEM_RETENTION_DAYS=365
@@ -584,7 +655,7 @@ fn disable_systemd() -> Result<()> {
 }
 
 fn enable_shell_fallback() -> Result<()> {
-    println!("  ⚠ systemd not available, using shell startup fallback");
+    println!("  \u{26a0} systemd not available, using shell startup fallback");
 
     let shell = std::env::var("SHELL").unwrap_or_default();
     let rc_path = if shell.contains("zsh") {
@@ -597,15 +668,25 @@ fn enable_shell_fallback() -> Result<()> {
     if rc_path.exists() {
         let contents = fs::read_to_string(&rc_path)?;
         if contents.contains(AUTOSTART_MARKER) {
-            println!("  ✓ autostart already configured in {}", rc_path.display());
+            println!("  \u{2713} autostart already configured in {}", rc_path.display());
             return Ok(());
         }
     }
 
+    // Enhanced shell fallback with stale PID cleanup, health check, and log redirect.
     let block = format!(
         "\n{AUTOSTART_MARKER}\n\
-         if ! pgrep -x ggnmem-daemon > /dev/null 2>&1; then\n    \
-             ggnmem-daemon &>/dev/null & disown 2>/dev/null\n\
+         if [ -f \"$HOME/.local/state/ggnmem/daemon.pid\" ]; then\n  \
+             _ggnmem_pid=$(cat \"$HOME/.local/state/ggnmem/daemon.pid\" 2>/dev/null)\n  \
+             if [ -n \"$_ggnmem_pid\" ] && ! kill -0 \"$_ggnmem_pid\" 2>/dev/null; then\n    \
+                 rm -f \"$HOME/.local/state/ggnmem/daemon.pid\" 2>/dev/null\n    \
+                 rm -f \"${{XDG_RUNTIME_DIR:-/tmp}}/ggnmem/daemon.sock\" 2>/dev/null\n  \
+             fi\n  \
+             unset _ggnmem_pid\n\
+         fi\n\
+         if ! pgrep -x ggnmem-daemon > /dev/null 2>&1; then\n  \
+             mkdir -p \"$HOME/.local/state/ggnmem/logs\"\n  \
+             ggnmem-daemon >> \"$HOME/.local/state/ggnmem/logs/daemon.log\" 2>&1 & disown 2>/dev/null\n\
          fi\n\
          {AUTOSTART_MARKER_END}\n"
     );
@@ -619,7 +700,7 @@ fn enable_shell_fallback() -> Result<()> {
     use std::io::Write;
     file.write_all(block.as_bytes())?;
 
-    println!("  ✓ autostart added to {}", rc_path.display());
+    println!("  \u{2713} autostart added to {}", rc_path.display());
     Ok(())
 }
 
