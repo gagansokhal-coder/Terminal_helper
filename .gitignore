@@ -6,3 +6,5 @@
 *.sqlite
 *.sqlite3
 *.tar.gz
+RELEASE_NOTES.md
+checksums.txt

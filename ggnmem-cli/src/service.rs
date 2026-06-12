@@ -668,7 +668,10 @@ fn enable_shell_fallback() -> Result<()> {
     if rc_path.exists() {
         let contents = fs::read_to_string(&rc_path)?;
         if contents.contains(AUTOSTART_MARKER) {
-            println!("  \u{2713} autostart already configured in {}", rc_path.display());
+            println!(
+                "  \u{2713} autostart already configured in {}",
+                rc_path.display()
+            );
             return Ok(());
         }
     }

@@ -245,9 +245,24 @@ fn rollback(target_dir: &Path) {
     }
 }
 
+fn print_help() {
+    println!("ggnmem upgrade — update ggnmem from a release bundle\n");
+    println!("usage: ggnmem upgrade [--bundle <PATH>]\n");
+    println!("options:");
+    println!("  --bundle <PATH>    Path to release bundle directory or tarball");
+    println!("  --help, -h         Show this help message\n");
+    println!("This command will validate the bundle, backup existing binaries,");
+    println!("and securely replace them with the new versions.");
+}
+
 // ─── Main upgrade command ────────────────────────────────────────────────────
 
 pub fn cmd_upgrade(args: &[String]) -> Result<()> {
+    if crate::has_flag(args, "--help") || crate::has_flag(args, "-h") {
+        print_help();
+        return Ok(());
+    }
+
     println!("ggnmem upgrade");
     println!("─────────────────────────────────");
     println!();
@@ -337,12 +352,18 @@ pub fn cmd_upgrade(args: &[String]) -> Result<()> {
         println!("  ✓ backed up ggnmem-daemon → ggnmem-daemon.old");
     }
 
-    // Copy new binaries.
+    // Copy new binaries. (Remove existing to avoid 'Text file busy' os error 26)
+    if target_cli.exists() {
+        let _ = fs::remove_file(&target_cli);
+    }
     fs::copy(&new_cli, &target_cli)
         .with_context(|| format!("copy ggnmem to {}", target_cli.display()))?;
     set_executable(&target_cli)?;
     println!("  ✓ installed ggnmem");
 
+    if target_daemon.exists() {
+        let _ = fs::remove_file(&target_daemon);
+    }
     fs::copy(&new_daemon, &target_daemon)
         .with_context(|| format!("copy ggnmem-daemon to {}", target_daemon.display()))?;
     set_executable(&target_daemon)?;

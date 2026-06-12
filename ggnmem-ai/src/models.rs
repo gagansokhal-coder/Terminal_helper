@@ -767,11 +767,17 @@ mod tests {
         let models = mgr.list_available();
 
         // MiniLM should be downloadable.
-        let minilm = models.iter().find(|m| m.name == "all-MiniLM-L6-v2").unwrap();
+        let minilm = models
+            .iter()
+            .find(|m| m.name == "all-MiniLM-L6-v2")
+            .unwrap();
         assert!(minilm.downloadable);
 
         // BGE Small should NOT be downloadable (Coming Soon).
-        let bge = models.iter().find(|m| m.name == "bge-small-en-v1.5").unwrap();
+        let bge = models
+            .iter()
+            .find(|m| m.name == "bge-small-en-v1.5")
+            .unwrap();
         assert!(!bge.downloadable);
     }
 

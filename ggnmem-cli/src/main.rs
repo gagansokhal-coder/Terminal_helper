@@ -1380,7 +1380,12 @@ fn ai_enable(args: &[String]) -> Result<()> {
 
         if answer.is_empty() || answer == "y" || answer == "yes" {
             println!();
-            do_model_install(&cfg.ai.model_name, &ai_cfg.models_dir, &ai_cfg.vector_db_path, true)?;
+            do_model_install(
+                &cfg.ai.model_name,
+                &ai_cfg.models_dir,
+                &ai_cfg.vector_db_path,
+                true,
+            )?;
         } else {
             println!("  skipped. Install later with: ggnmem ai install");
         }
@@ -1469,7 +1474,12 @@ fn ai_install(args: &[String]) -> Result<()> {
         }
     };
 
-    do_model_install(&model_name, &ai_cfg.models_dir, &ai_cfg.vector_db_path, cfg.ai.ai_enabled)
+    do_model_install(
+        &model_name,
+        &ai_cfg.models_dir,
+        &ai_cfg.vector_db_path,
+        cfg.ai.ai_enabled,
+    )
 }
 
 /// Interactive model selection menu.
@@ -1583,11 +1593,15 @@ fn do_model_install(
                     let (provider, _) = ggnmem_ai::create_provider(models_dir, &canonical);
                     let store2 = ggnmem_ai::VectorStore::new(vector_db_path.to_path_buf());
                     let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store2);
-                    match ggnmem_ai::indexer::index_all_commands(&db_path, &pipeline, |done, total| {
-                        if total > 0 {
-                            eprint!("\r  indexed: {done} / {total}");
-                        }
-                    }) {
+                    match ggnmem_ai::indexer::index_all_commands(
+                        &db_path,
+                        &pipeline,
+                        |done, total| {
+                            if total > 0 {
+                                eprint!("\r  indexed: {done} / {total}");
+                            }
+                        },
+                    ) {
                         Ok(count) => {
                             eprintln!();
                             println!("  \u{2713} indexed {count} commands");
@@ -1853,8 +1867,7 @@ fn ai_setup() -> Result<()> {
 
     let db_path = default_db_path();
     if db_path.exists() {
-        let (provider, provider_name) =
-            ggnmem_ai::create_provider(&ai_cfg.models_dir, model_name);
+        let (provider, provider_name) = ggnmem_ai::create_provider(&ai_cfg.models_dir, model_name);
         let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path.clone());
         let _ = store.ensure_initialized();
         let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store);
@@ -1896,7 +1909,10 @@ fn ai_setup() -> Result<()> {
                 if matches.is_empty() {
                     println!("  ✓ semantic search operational (no results yet — capture some commands first)");
                 } else {
-                    println!("  ✓ semantic search operational — {} result(s) for '{test_query}':", matches.len());
+                    println!(
+                        "  ✓ semantic search operational — {} result(s) for '{test_query}':",
+                        matches.len()
+                    );
 
                     // Show top results with command text from DB.
                     let database =
@@ -1997,8 +2013,7 @@ fn ai_doctor() -> Result<()> {
     // ── Check 3: ONNX loads ──
     print!("  3. ONNX loads         ... ");
     if has_real {
-        let (provider, provider_name) =
-            ggnmem_ai::create_provider(&ai_cfg.models_dir, model_name);
+        let (provider, provider_name) = ggnmem_ai::create_provider(&ai_cfg.models_dir, model_name);
 
         if provider_name.contains("fallback") || provider_name.contains("N-gram") {
             println!("⚠ fell back to {provider_name}");
