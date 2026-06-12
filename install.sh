@@ -11,7 +11,8 @@
 #
 # Features:
 #   - Detects existing installations and upgrades in place
-#   - Preserves config and database
+#   - Preserves config, database, and installed AI models
+#   - Verifies binary checksums if checksums.txt is available
 #   - Verifies binaries after install
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -70,6 +71,7 @@ BIN_DIR="$HOME/.local/bin"
 CONFIG_DIR="$HOME/.config/ggnmem"
 DATA_DIR="$HOME/.local/share/ggnmem"
 STATE_DIR="$HOME/.local/state/ggnmem"
+MODELS_DIR="$DATA_DIR/models"
 
 step "Creating directories..."
 
@@ -104,21 +106,25 @@ step "Looking for binaries..."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLI_BIN=""
 DAEMON_BIN=""
+CHECKSUMS_FILE=""
 
 # Priority 1: release/ directory next to this script.
 if [ -f "$SCRIPT_DIR/release/ggnmem" ] && [ -f "$SCRIPT_DIR/release/ggnmem-daemon" ]; then
     CLI_BIN="$SCRIPT_DIR/release/ggnmem"
     DAEMON_BIN="$SCRIPT_DIR/release/ggnmem-daemon"
+    [ -f "$SCRIPT_DIR/release/checksums.txt" ] && CHECKSUMS_FILE="$SCRIPT_DIR/release/checksums.txt"
     info "Found binaries in release/"
 # Priority 2: same directory as install.sh (extracted tarball).
 elif [ -f "$SCRIPT_DIR/ggnmem" ] && [ -f "$SCRIPT_DIR/ggnmem-daemon" ]; then
     CLI_BIN="$SCRIPT_DIR/ggnmem"
     DAEMON_BIN="$SCRIPT_DIR/ggnmem-daemon"
+    [ -f "$SCRIPT_DIR/checksums.txt" ] && CHECKSUMS_FILE="$SCRIPT_DIR/checksums.txt"
     info "Found binaries alongside install.sh"
 # Priority 3: release/ directory in current directory.
 elif [ -f "./release/ggnmem" ] && [ -f "./release/ggnmem-daemon" ]; then
     CLI_BIN="./release/ggnmem"
     DAEMON_BIN="./release/ggnmem-daemon"
+    [ -f "./release/checksums.txt" ] && CHECKSUMS_FILE="./release/checksums.txt"
     info "Found binaries in ./release/"
 # Priority 4: target/release/ (cargo build --release output).
 elif [ -f "$SCRIPT_DIR/target/release/ggnmem-cli" ] && [ -f "$SCRIPT_DIR/target/release/ggnmem-daemon" ]; then
@@ -138,6 +144,31 @@ else
     err "Or run the release script:"
     err "  bash scripts/build_release.sh"
     exit 1
+fi
+
+# ─── Verify checksums (if available) ────────────────────────────────────────
+
+if [ -n "$CHECKSUMS_FILE" ]; then
+    step "Verifying binary checksums..."
+
+    CHECKSUMS_DIR="$(dirname "$CHECKSUMS_FILE")"
+    cd "$CHECKSUMS_DIR"
+    if sha256sum --check checksums.txt > /dev/null 2>&1; then
+        ok "all checksums verified"
+    else
+        warn "checksum verification failed — some files may be corrupt"
+        sha256sum --check checksums.txt 2>&1 | head -10
+        echo ""
+        echo -e "${YELLOW}Continue anyway? (y/N)${RESET}"
+        read -r REPLY
+        if [ "$REPLY" != "y" ] && [ "$REPLY" != "Y" ]; then
+            err "installation aborted"
+            exit 1
+        fi
+    fi
+    cd - > /dev/null
+else
+    info "No checksums.txt found (skipping verification)"
 fi
 
 # ─── Stop daemon if upgrading ────────────────────────────────────────────────
@@ -269,6 +300,25 @@ else
     info "database will be created when daemon starts"
 fi
 
+# ─── Preserve models notice ─────────────────────────────────────────────────
+
+if [ -d "$MODELS_DIR" ]; then
+    MODEL_COUNT=$(find "$MODELS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+    if [ "$MODEL_COUNT" -gt 0 ]; then
+        ok "AI models preserved: $MODELS_DIR ($MODEL_COUNT model(s))"
+        # List installed models.
+        for model_dir in "$MODELS_DIR"/*/; do
+            if [ -d "$model_dir" ]; then
+                MODEL_NAME=$(basename "$model_dir")
+                MODEL_SIZE=$(du -sh "$model_dir" 2>/dev/null | cut -f1)
+                info "  model: $MODEL_NAME ($MODEL_SIZE)"
+            fi
+        done
+    fi
+else
+    info "no AI models installed (install with: ggnmem ai install)"
+fi
+
 # ─── PATH ────────────────────────────────────────────────────────────────────
 
 step "Checking PATH..."
@@ -385,8 +435,16 @@ echo "  config:    $CONFIG_FILE"
 echo "  data:      $DATA_DIR/"
 echo ""
 if $UPGRADE_MODE; then
-    echo "  previous:  $EXISTING_VERSION"
-    echo "  current:   $NEW_VERSION"
+    echo "  ┌─────────────────────────────────┐"
+    echo "  │ Previous: $EXISTING_VERSION"
+    echo "  │ Current:  $NEW_VERSION"
+    echo "  ├─────────────────────────────────┤"
+    echo "  │ ✓ config preserved              │"
+    echo "  │ ✓ database preserved            │"
+    if [ -d "$MODELS_DIR" ] && [ "$(find "$MODELS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)" -gt 0 ]; then
+        echo "  │ ✓ AI models preserved           │"
+    fi
+    echo "  └─────────────────────────────────┘"
     echo ""
     echo "  next steps:"
     echo "    1. Restart daemon:    ggnmem restart"

@@ -11,9 +11,15 @@
 #   - install.sh    (installer)
 #   - README.md     (quick-start docs)
 #   - VERSION       (build metadata)
+#   - checksums.txt (SHA256 hashes of release files)
 #
 # Then bundles everything into:
 #   ggnmem-linux-<arch>.tar.gz
+#
+# GitHub Release assets generated:
+#   - ggnmem-linux-<arch>.tar.gz
+#   - checksums.txt
+#   - RELEASE_NOTES.md
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
@@ -56,10 +62,12 @@ info "Architecture: $ARCH_TAG"
 VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE=$(date +%Y-%m-%d)
+RUSTC_VER=$(rustc --version 2>/dev/null | sed 's/rustc \([^ ]*\).*/\1/' || echo "unknown")
 
 info "Version: $VERSION"
 info "Commit: $GIT_COMMIT"
 info "Date: $BUILD_DATE"
+info "Rust: $RUSTC_VER"
 
 # ─── Build ────────────────────────────────────────────────────────────────────
 
@@ -116,6 +124,7 @@ version=$VERSION
 commit=$GIT_COMMIT
 date=$BUILD_DATE
 arch=$ARCH_TAG
+rust=$RUSTC_VER
 EOF
 ok "release/VERSION"
 
@@ -192,6 +201,7 @@ ggnmem uninstall --full   # removes everything
 | `~/.local/bin/ggnmem-daemon` | Background daemon |
 | `~/.config/ggnmem/config.toml` | Configuration |
 | `~/.local/share/ggnmem/ggnmem.db` | Command database |
+| `~/.local/share/ggnmem/models/` | AI embedding models |
 | `~/.local/state/ggnmem/` | Runtime state |
 
 ## License
@@ -199,6 +209,15 @@ ggnmem uninstall --full   # removes everything
 MIT OR Apache-2.0
 EOF
 ok "release/README.md"
+
+# ─── Generate checksums ──────────────────────────────────────────────────────
+
+info "Generating checksums..."
+
+cd "$RELEASE_DIR"
+sha256sum ggnmem ggnmem-daemon install.sh README.md VERSION > checksums.txt
+cd "$PROJECT_ROOT"
+ok "release/checksums.txt"
 
 # ─── Create tarball ──────────────────────────────────────────────────────────
 
@@ -214,9 +233,109 @@ tar czf "$TARBALL_PATH" -C "$RELEASE_DIR" \
     ggnmem-daemon \
     install.sh \
     README.md \
-    VERSION
+    VERSION \
+    checksums.txt
 
 ok "$TARBALL_NAME"
+
+# ─── Verify tarball integrity ────────────────────────────────────────────────
+
+info "Verifying tarball integrity..."
+
+VERIFY_DIR=$(mktemp -d /tmp/ggnmem-verify-XXXXXX)
+trap "rm -rf '$VERIFY_DIR'" EXIT
+
+tar xzf "$TARBALL_PATH" -C "$VERIFY_DIR"
+
+cd "$VERIFY_DIR"
+if sha256sum --check checksums.txt > /dev/null 2>&1; then
+    ok "tarball checksums verified"
+else
+    err "tarball checksum verification FAILED"
+    sha256sum --check checksums.txt
+    exit 1
+fi
+cd "$PROJECT_ROOT"
+
+rm -rf "$VERIFY_DIR"
+trap - EXIT
+
+# ─── Generate top-level checksums.txt (for GitHub Release) ───────────────────
+
+info "Generating release asset checksums..."
+
+sha256sum "$TARBALL_PATH" > "$PROJECT_ROOT/checksums.txt"
+ok "checksums.txt (release asset)"
+
+# ─── Generate RELEASE_NOTES.md ──────────────────────────────────────────────
+
+info "Generating release notes..."
+
+TARBALL_SHA256=$(sha256sum "$TARBALL_PATH" | cut -d' ' -f1)
+TARBALL_SIZE=$(du -h "$TARBALL_PATH" | cut -f1)
+CLI_SIZE=$(du -h "$RELEASE_DIR/ggnmem" | cut -f1)
+DAEMON_SIZE=$(du -h "$RELEASE_DIR/ggnmem-daemon" | cut -f1)
+
+cat > "$PROJECT_ROOT/RELEASE_NOTES.md" <<EOF
+# ggnmem v${VERSION}
+
+## What's New
+
+<!-- Add changelog entries here before publishing -->
+
+## Installation
+
+### Quick Install (from tarball)
+
+\`\`\`bash
+tar xzf ${TARBALL_NAME}
+bash install.sh
+\`\`\`
+
+### Upgrade Existing Installation
+
+\`\`\`bash
+ggnmem upgrade --bundle ${TARBALL_NAME}
+\`\`\`
+
+## Checksums
+
+| File | SHA256 |
+|------|--------|
+| \`${TARBALL_NAME}\` | \`${TARBALL_SHA256}\` |
+
+## Build Info
+
+| Field | Value |
+|-------|-------|
+| Version | ${VERSION} |
+| Commit | ${GIT_COMMIT} |
+| Date | ${BUILD_DATE} |
+| Rust | ${RUSTC_VER} |
+| Platform | linux-${ARCH_TAG} |
+
+## Binary Sizes
+
+| Binary | Size |
+|--------|------|
+| ggnmem | ${CLI_SIZE} |
+| ggnmem-daemon | ${DAEMON_SIZE} |
+| Tarball | ${TARBALL_SIZE} |
+
+## Requirements
+
+- Linux (x86_64 or aarch64) or WSL
+- No Rust toolchain required (pre-built binaries)
+- ~100 MB disk space (with AI model)
+
+## Preserved During Upgrade
+
+- \`~/.config/ggnmem/config.toml\` — configuration
+- \`~/.local/share/ggnmem/ggnmem.db\` — command history database
+- \`~/.local/share/ggnmem/models/\` — installed AI models
+EOF
+
+ok "RELEASE_NOTES.md"
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
 
@@ -242,9 +361,28 @@ echo ""
 echo "  Version:   $VERSION"
 echo "  Commit:    $GIT_COMMIT"
 echo "  Date:      $BUILD_DATE"
+echo "  Rust:      $RUSTC_VER"
 echo "  Arch:      $ARCH_TAG"
 echo ""
+
+# Show checksums.
+echo "  Checksums (SHA256):"
+echo "    $(sha256sum "$TARBALL_PATH" | cut -d' ' -f1)  $TARBALL_NAME"
+echo ""
+
 echo "  Release directory: $RELEASE_DIR/"
+echo ""
+echo "  Release contents:"
+for f in "$RELEASE_DIR"/*; do
+    SIZE=$(du -h "$f" | cut -f1)
+    echo "    $(basename "$f") ($SIZE)"
+done
+echo ""
+
+echo -e "  ${BOLD}GitHub Release assets:${RESET}"
+echo "    1. $TARBALL_NAME"
+echo "    2. checksums.txt"
+echo "    3. RELEASE_NOTES.md"
 echo ""
 echo "  To install:"
 echo "    cd release && bash install.sh"

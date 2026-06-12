@@ -4,6 +4,11 @@
 //! `ggnmem upgrade --bundle PATH`  — upgrade from a specific tarball or directory.
 //!
 //! This replaces binaries in `~/.local/bin/` while preserving config and database.
+//!
+//! Phase 17 enhancements:
+//! - SHA256 checksum verification from `checksums.txt` in the bundle
+//! - Rollback to `.old` backups if verification fails after replacement
+//! - Reports on preserved config, database, and installed AI models
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -21,6 +26,13 @@ fn home_dir() -> Result<PathBuf> {
 
 fn bin_dir() -> Result<PathBuf> {
     Ok(home_dir()?.join(".local").join("bin"))
+}
+
+fn models_dir() -> Result<PathBuf> {
+    let data_home = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().unwrap_or_default().join(".local").join("share"));
+    Ok(data_home.join("ggnmem").join("models"))
 }
 
 // ─── Bundle discovery ────────────────────────────────────────────────────────
@@ -120,6 +132,71 @@ fn extract_tarball(tarball: &Path) -> Result<PathBuf> {
     );
 }
 
+// ─── Checksum verification ──────────────────────────────────────────────────
+
+/// Verify bundle integrity using checksums.txt if present.
+///
+/// Returns Ok(true) if checksums verified, Ok(false) if no checksums.txt,
+/// or Err if verification failed.
+fn verify_bundle_checksums(bundle_dir: &Path) -> Result<bool> {
+    let checksums_path = bundle_dir.join("checksums.txt");
+    if !checksums_path.exists() {
+        return Ok(false);
+    }
+
+    let contents = fs::read_to_string(&checksums_path).context("read checksums.txt")?;
+    let mut all_ok = true;
+
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        // Format: "<sha256>  <filename>" (two spaces between hash and name).
+        let parts: Vec<&str> = line.splitn(2, char::is_whitespace).collect();
+        if parts.len() != 2 {
+            continue;
+        }
+
+        let expected_hash = parts[0].trim();
+        let filename = parts[1].trim();
+        let file_path = bundle_dir.join(filename);
+
+        if !file_path.exists() {
+            println!("  ⚠ {filename}: file missing (skipped)");
+            continue;
+        }
+
+        // Compute SHA256 using sha256sum command.
+        let output = Command::new("sha256sum")
+            .arg(&file_path)
+            .output()
+            .with_context(|| format!("sha256sum {filename}"))?;
+
+        if output.status.success() {
+            let actual = String::from_utf8_lossy(&output.stdout);
+            let actual_hash = actual.split_whitespace().next().unwrap_or("");
+            if actual_hash == expected_hash {
+                println!("  ✓ {filename}: checksum OK");
+            } else {
+                println!("  ✗ {filename}: checksum MISMATCH");
+                println!("    expected: {expected_hash}");
+                println!("    actual:   {actual_hash}");
+                all_ok = false;
+            }
+        } else {
+            println!("  ⚠ {filename}: could not compute hash");
+        }
+    }
+
+    if !all_ok {
+        bail!("bundle checksum verification failed — aborting upgrade");
+    }
+
+    Ok(true)
+}
+
 // ─── Version comparison ──────────────────────────────────────────────────────
 
 /// Get the version string from a binary by running it with `version`.
@@ -137,6 +214,35 @@ fn get_binary_version(binary_path: &Path) -> Option<String> {
                 None
             }
         })
+}
+
+// ─── Rollback ────────────────────────────────────────────────────────────────
+
+/// Restore backed-up binaries after a failed upgrade.
+fn rollback(target_dir: &Path) {
+    println!();
+    println!("  ⚠ rolling back to previous binaries...");
+
+    let cli_backup = target_dir.join("ggnmem.old");
+    let daemon_backup = target_dir.join("ggnmem-daemon.old");
+    let cli_target = target_dir.join("ggnmem");
+    let daemon_target = target_dir.join("ggnmem-daemon");
+
+    if cli_backup.exists() {
+        if fs::copy(&cli_backup, &cli_target).is_ok() {
+            println!("  ✓ restored ggnmem from backup");
+        } else {
+            println!("  ✗ failed to restore ggnmem — manual fix needed");
+        }
+    }
+
+    if daemon_backup.exists() {
+        if fs::copy(&daemon_backup, &daemon_target).is_ok() {
+            println!("  ✓ restored ggnmem-daemon from backup");
+        } else {
+            println!("  ✗ failed to restore ggnmem-daemon — manual fix needed");
+        }
+    }
 }
 
 // ─── Main upgrade command ────────────────────────────────────────────────────
@@ -164,8 +270,22 @@ pub fn cmd_upgrade(args: &[String]) -> Result<()> {
 
     println!("  bundle: {}", bundle_dir.display());
 
+    // ── Validate bundle checksums ───────────────────────────────────────
+
+    println!();
+    print!("  validating bundle ... ");
+    match verify_bundle_checksums(&bundle_dir) {
+        Ok(true) => println!("checksums verified"),
+        Ok(false) => println!("no checksums.txt (skipped)"),
+        Err(e) => {
+            println!("FAILED");
+            return Err(e);
+        }
+    }
+
     // Show current version.
     let current_version = env!("CARGO_PKG_VERSION");
+    println!();
     println!("  current version: {current_version}");
 
     // Show bundle version.
@@ -232,17 +352,45 @@ pub fn cmd_upgrade(args: &[String]) -> Result<()> {
 
     println!();
     print!("  verifying ... ");
-    if let Some(installed_version) = get_binary_version(&target_cli) {
-        println!("{installed_version}");
-    } else {
-        println!("warning: could not verify installed binary");
+    match get_binary_version(&target_cli) {
+        Some(installed_version) => {
+            println!("{installed_version}");
+        }
+        None => {
+            println!("FAILED — could not run installed binary");
+            rollback(&target_dir);
+            bail!("upgrade verification failed — rolled back to previous version");
+        }
     }
 
-    // ── Preserve notice ─────────────────────────────────────────────────
+    // ── Preserve notices ────────────────────────────────────────────────
 
     println!();
-    println!("  ✓ config preserved (~/.config/ggnmem/config.toml)");
-    println!("  ✓ database preserved (~/.local/share/ggnmem/ggnmem.db)");
+    println!("  preserved:");
+    println!("  ✓ config   (~/.config/ggnmem/config.toml)");
+    println!("  ✓ database (~/.local/share/ggnmem/ggnmem.db)");
+
+    // Report on installed AI models.
+    match models_dir() {
+        Ok(mdir) if mdir.exists() => {
+            let mut model_count = 0;
+            if let Ok(entries) = fs::read_dir(&mdir) {
+                for entry in entries.flatten() {
+                    if entry.path().is_dir() {
+                        model_count += 1;
+                    }
+                }
+            }
+            if model_count > 0 {
+                println!(
+                    "  ✓ models   (~/.local/share/ggnmem/models/ — {} model{})",
+                    model_count,
+                    if model_count == 1 { "" } else { "s" }
+                );
+            }
+        }
+        _ => {}
+    }
 
     // ── Restart daemon if it was running ────────────────────────────────
 

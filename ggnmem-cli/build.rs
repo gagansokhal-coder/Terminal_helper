@@ -1,9 +1,11 @@
 // Build script for ggnmem-cli.
 //
 // Captures compile-time metadata for `ggnmem version`:
-//   - GGNMEM_BUILD_DATE   — ISO 8601 date (e.g. "2026-06-10")
-//   - GGNMEM_GIT_COMMIT   — short git commit hash (e.g. "a1b2c3d")
-//   - GGNMEM_BUILD_PROFILE — "debug" or "release"
+//   - GGNMEM_BUILD_DATE      — ISO 8601 date (e.g. "2026-06-10")
+//   - GGNMEM_GIT_COMMIT      — short git commit hash (e.g. "a1b2c3d")
+//   - GGNMEM_BUILD_PROFILE   — "debug" or "release"
+//   - GGNMEM_RUSTC_VERSION   — Rust compiler version (e.g. "1.82.0")
+//   - GGNMEM_TARGET_PLATFORM — platform string (e.g. "linux-x86_64")
 
 use std::process::Command;
 
@@ -19,6 +21,15 @@ fn main() {
     // ── Build profile ────────────────────────────────────────────────────
     let profile = std::env::var("PROFILE").unwrap_or_else(|_| "unknown".to_owned());
     println!("cargo:rustc-env=GGNMEM_BUILD_PROFILE={profile}");
+
+    // ── Rust compiler version ───────────────────────────────────────────
+    let rustc_version = rustc_version();
+    println!("cargo:rustc-env=GGNMEM_RUSTC_VERSION={rustc_version}");
+
+    // ── Target platform ─────────────────────────────────────────────────
+    let target = std::env::var("TARGET").unwrap_or_else(|_| "unknown".to_owned());
+    let platform = target_to_platform(&target);
+    println!("cargo:rustc-env=GGNMEM_TARGET_PLATFORM={platform}");
 
     // Re-run only when git HEAD changes or this script changes.
     println!("cargo:rerun-if-changed=build.rs");
@@ -62,6 +73,51 @@ fn git_commit_short() -> String {
     "unknown".to_owned()
 }
 
+/// Get the Rust compiler version string (e.g. "1.82.0").
+fn rustc_version() -> String {
+    if let Ok(output) = Command::new("rustc").arg("--version").output() {
+        if output.status.success() {
+            let full = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            // Output is "rustc 1.82.0 (..." — extract just the version number.
+            if let Some(version) = full.strip_prefix("rustc ") {
+                return version
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("unknown")
+                    .to_owned();
+            }
+        }
+    }
+    "unknown".to_owned()
+}
+
+/// Convert a Rust target triple to a user-friendly platform string.
+///
+/// Examples:
+///   "x86_64-unknown-linux-gnu"    → "linux-x86_64"
+///   "aarch64-unknown-linux-gnu"   → "linux-aarch64"
+///   "x86_64-apple-darwin"         → "macos-x86_64"
+///   "aarch64-apple-darwin"        → "macos-aarch64"
+fn target_to_platform(target: &str) -> String {
+    let parts: Vec<&str> = target.split('-').collect();
+    if parts.len() < 3 {
+        return target.to_owned();
+    }
+
+    let arch = parts[0];
+    let os = if target.contains("linux") {
+        "linux"
+    } else if target.contains("darwin") {
+        "macos"
+    } else if target.contains("windows") {
+        "windows"
+    } else {
+        parts[2]
+    };
+
+    format!("{os}-{arch}")
+}
+
 /// Convert epoch days to (year, month, day).
 /// Algorithm from Howard Hinnant's chrono-compatible date library.
 fn epoch_days_to_date(days: u64) -> (u64, u64, u64) {
@@ -77,3 +133,4 @@ fn epoch_days_to_date(days: u64) -> (u64, u64, u64) {
     let y = if m <= 2 { y + 1 } else { y };
     (y, m, d)
 }
+
