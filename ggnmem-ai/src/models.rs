@@ -95,9 +95,20 @@ const MODEL_REGISTRY: &[ModelRegistryEntry] = &[
         description: "BAAI bge-small-en-v1.5 (ONNX, ~130 MB)",
         size_bytes: 130_000_000,
         dimensions: 384,
-        downloadable: false, // Coming soon — not yet available for download
+        downloadable: true,
         #[cfg(feature = "onnx")]
-        assets: &[],
+        assets: &[
+            ModelAsset {
+                filename: "model.onnx",
+                url: "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/onnx/model.onnx",
+                sha256: "",
+            },
+            ModelAsset {
+                filename: "tokenizer.json",
+                url: "https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/tokenizer.json",
+                sha256: "",
+            },
+        ],
     },
 ];
 
@@ -773,12 +784,12 @@ mod tests {
             .unwrap();
         assert!(minilm.downloadable);
 
-        // BGE Small should NOT be downloadable (Coming Soon).
+        // BGE Small should be downloadable.
         let bge = models
             .iter()
             .find(|m| m.name == "bge-small-en-v1.5")
             .unwrap();
-        assert!(!bge.downloadable);
+        assert!(bge.downloadable);
     }
 
     #[test]
@@ -788,18 +799,19 @@ mod tests {
 
         assert!(mgr.is_downloadable("minilm"));
         assert!(mgr.is_downloadable("all-MiniLM-L6-v2"));
-        assert!(!mgr.is_downloadable("bge"));
-        assert!(!mgr.is_downloadable("bge-small-en-v1.5"));
+        assert!(mgr.is_downloadable("bge"));
+        assert!(mgr.is_downloadable("bge-small-en-v1.5"));
     }
 
     #[test]
-    fn install_non_downloadable_model_fails() {
+    fn bge_has_download_assets() {
         let tmp = TempDir::new().unwrap();
         let mgr = ModelManager::new(tmp.path().to_path_buf());
-
-        let result = mgr.install("bge-small-en-v1.5", |_, _| {});
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("not yet available"), "error was: {err}");
+        let models = mgr.list_available();
+        let bge = models
+            .iter()
+            .find(|m| m.name == "bge-small-en-v1.5")
+            .unwrap();
+        assert!(bge.downloadable);
     }
 }
