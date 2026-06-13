@@ -63,15 +63,13 @@ impl MiniLmEmbeddingProvider {
     ///
     /// If `name` is `None`, the directory basename is used as the model name.
     pub fn load_with_name(model_dir: &Path, name: Option<&str>) -> AiResult<Self> {
-        let model_name = name
-            .map(|n| n.to_owned())
-            .unwrap_or_else(|| {
-                model_dir
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_owned()
-            });
+        let model_name = name.map(|n| n.to_owned()).unwrap_or_else(|| {
+            model_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_owned()
+        });
         let model_path = model_dir.join("model.onnx");
         let tokenizer_path = model_dir.join("tokenizer.json");
 

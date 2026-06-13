@@ -92,9 +92,7 @@ impl SimpleEntry {
     /// Convert to a full `KnowledgeEntry`, deriving topic from filename.
     pub fn into_knowledge_entry(self, default_topic: &str) -> KnowledgeEntry {
         let topic = self.topic.unwrap_or_else(|| default_topic.to_owned());
-        let category = self
-            .category
-            .unwrap_or_else(|| "general".to_owned());
+        let category = self.category.unwrap_or_else(|| "general".to_owned());
         let aliases = match self.query {
             Some(q) => vec![q],
             None => Vec::new(),

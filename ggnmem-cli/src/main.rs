@@ -86,7 +86,9 @@ fn print_usage() {
     println!("knowledge base:");
     println!("  ask <query>      Get command suggestions from knowledge base");
     println!("  explain <cmd>    Explain a command (purpose, flags, examples)");
-    println!("  learn <topic>    Learn commands for a topic (docker, git, linux, cargo, go, kubernetes)");
+    println!(
+        "  learn <topic>    Learn commands for a topic (docker, git, linux, cargo, go, kubernetes)"
+    );
     println!("  knowledge list   List all loaded knowledge packs");
     println!("  knowledge validate Validate custom knowledge packs");
     println!();
@@ -2530,7 +2532,10 @@ fn cmd_knowledge(args: &[String]) -> Result<()> {
             } else {
                 println!("  custom packs ({}):", custom.len());
                 for ps in &custom {
-                    println!("    {:<15} {} entries  ← {}", ps.name, ps.entry_count, ps.source);
+                    println!(
+                        "    {:<15} {} entries  ← {}",
+                        ps.name, ps.entry_count, ps.source
+                    );
                 }
             }
             println!();
@@ -2573,7 +2578,10 @@ fn cmd_knowledge(args: &[String]) -> Result<()> {
 
             // Per-pack validation.
             for ps in sources {
-                println!("    ✓ {:<15} {} entries  ({})", ps.name, ps.entry_count, ps.source);
+                println!(
+                    "    ✓ {:<15} {} entries  ({})",
+                    ps.name, ps.entry_count, ps.source
+                );
             }
 
             if errors.is_empty() {
@@ -2590,7 +2598,9 @@ fn cmd_knowledge(args: &[String]) -> Result<()> {
                 println!();
                 println!("  Custom pack format (JSON):");
                 println!("    Option 1 — full format:");
-                println!("      {{\"topic\": \"name\", \"description\": \"...\", \"entries\": [...]}}");
+                println!(
+                    "      {{\"topic\": \"name\", \"description\": \"...\", \"entries\": [...]}}"
+                );
                 println!("    Option 2 — simple array:");
                 println!("      [{{\"command\": \"cmd\", \"description\": \"...\"}}, ...]");
             }
@@ -2633,9 +2643,7 @@ fn ai_use(args: &[String]) -> Result<()> {
     }
 
     if !mgr.is_installed(&canonical) {
-        bail!(
-            "model '{canonical}' is not installed.\nInstall with: ggnmem ai install {canonical}"
-        );
+        bail!("model '{canonical}' is not installed.\nInstall with: ggnmem ai install {canonical}");
     }
 
     // Check if already active.
@@ -2711,8 +2719,7 @@ fn ai_benchmark() -> Result<()> {
     for model in &installed {
         // Measure model load time.
         let load_start = std::time::Instant::now();
-        let (provider, provider_name) =
-            ggnmem_ai::create_provider(&ai_cfg.models_dir, &model.name);
+        let (provider, provider_name) = ggnmem_ai::create_provider(&ai_cfg.models_dir, &model.name);
         let load_ms = load_start.elapsed().as_millis();
 
         // Skip N-gram fallback models (no real model files).

@@ -284,10 +284,8 @@ impl KnowledgeBase {
         let contents = match std::fs::read_to_string(path) {
             Ok(c) => c,
             Err(e) => {
-                self.load_errors.push(format!(
-                    "{}: failed to read: {e}",
-                    path.display()
-                ));
+                self.load_errors
+                    .push(format!("{}: failed to read: {e}", path.display()));
                 return;
             }
         };
@@ -315,10 +313,8 @@ impl KnowledgeBase {
 
         if let Ok(simple_entries) = serde_json::from_str::<Vec<entries::SimpleEntry>>(&contents) {
             if simple_entries.is_empty() {
-                self.load_errors.push(format!(
-                    "{}: empty entries array",
-                    path.display()
-                ));
+                self.load_errors
+                    .push(format!("{}: empty entries array", path.display()));
                 return;
             }
             let count = simple_entries.len();
@@ -327,8 +323,7 @@ impl KnowledgeBase {
                 .entry(topic_lower.clone())
                 .or_insert_with(|| format!("Custom: {topic_name}"));
             for entry in simple_entries {
-                self.entries
-                    .push(entry.into_knowledge_entry(&topic_lower));
+                self.entries.push(entry.into_knowledge_entry(&topic_lower));
             }
             self.pack_sources.push(PackSource {
                 name: topic_name,
@@ -349,10 +344,8 @@ impl KnowledgeBase {
         let contents = match std::fs::read_to_string(path) {
             Ok(c) => c,
             Err(e) => {
-                self.load_errors.push(format!(
-                    "{}: failed to read: {e}",
-                    path.display()
-                ));
+                self.load_errors
+                    .push(format!("{}: failed to read: {e}", path.display()));
                 return;
             }
         };
@@ -396,11 +389,7 @@ fn entry_to_explain(entry: &KnowledgeEntry) -> ExplainResult {
 /// Get the user knowledge directory: `~/.config/ggnmem/knowledge/`
 fn user_knowledge_dir() -> Option<PathBuf> {
     if let Some(config_home) = std::env::var_os("XDG_CONFIG_HOME") {
-        return Some(
-            PathBuf::from(config_home)
-                .join("ggnmem")
-                .join("knowledge"),
-        );
+        return Some(PathBuf::from(config_home).join("ggnmem").join("knowledge"));
     }
 
     if let Some(home) = std::env::var_os("HOME") {
@@ -429,14 +418,21 @@ mod tests {
     fn topics_are_loaded() {
         let kb = KnowledgeBase::builtin_only();
         let topics = kb.topics();
-        assert!(topics.len() >= 6, "expected >= 6 topics, got {}", topics.len());
+        assert!(
+            topics.len() >= 6,
+            "expected >= 6 topics, got {}",
+            topics.len()
+        );
     }
 
     #[test]
     fn ask_docker_ps() {
         let kb = KnowledgeBase::builtin_only();
         let results = kb.ask("show running containers", 5);
-        assert!(!results.is_empty(), "expected results for 'show running containers'");
+        assert!(
+            !results.is_empty(),
+            "expected results for 'show running containers'"
+        );
         assert_eq!(results[0].command, "docker ps");
     }
 
@@ -444,7 +440,10 @@ mod tests {
     fn ask_git_status() {
         let kb = KnowledgeBase::builtin_only();
         let results = kb.ask("check git changes", 5);
-        assert!(!results.is_empty(), "expected results for 'check git changes'");
+        assert!(
+            !results.is_empty(),
+            "expected results for 'check git changes'"
+        );
         assert_eq!(results[0].command, "git status");
     }
 
@@ -452,7 +451,10 @@ mod tests {
     fn ask_cargo_build() {
         let kb = KnowledgeBase::builtin_only();
         let results = kb.ask("build rust project", 5);
-        assert!(!results.is_empty(), "expected results for 'build rust project'");
+        assert!(
+            !results.is_empty(),
+            "expected results for 'build rust project'"
+        );
         assert!(results[0].command.contains("cargo build"));
     }
 

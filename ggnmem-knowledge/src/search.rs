@@ -89,7 +89,10 @@ pub fn score_entry(query: &str, entry: &KnowledgeEntry) -> f64 {
     // 6. Category/topic bonus: if query words include the topic or category name.
     let topic_lower = entry.topic.to_lowercase();
     let cat_lower = entry.category.to_lowercase();
-    if query_words.iter().any(|w| *w == topic_lower || *w == cat_lower) {
+    if query_words
+        .iter()
+        .any(|w| *w == topic_lower || *w == cat_lower)
+    {
         best_score = (best_score + 0.05).min(1.0);
     }
 
@@ -255,7 +258,11 @@ mod tests {
 
     #[test]
     fn command_match_scores_well() {
-        let entry = make_entry("git status", "Show working tree status", &["check git changes"]);
+        let entry = make_entry(
+            "git status",
+            "Show working tree status",
+            &["check git changes"],
+        );
         let score = score_entry("git status", &entry);
         assert!(score > 0.9, "expected > 0.9, got {score}");
     }
