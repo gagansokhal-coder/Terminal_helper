@@ -1,0 +1,179 @@
+{
+  "topic": "go",
+  "description": "Go programming language tools and commands",
+  "version": "1.0",
+  "entries": [
+    {
+      "command": "go build",
+      "description": "Compile Go packages and dependencies",
+      "category": "build",
+      "topic": "go",
+      "aliases": ["build go project", "compile go", "build go binary"],
+      "flags": [
+        {"flag": "-o", "description": "Output filename"},
+        {"flag": "-v", "description": "Verbose: print package names"},
+        {"flag": "-race", "description": "Enable race detector"},
+        {"flag": "-ldflags", "description": "Linker flags (e.g., version injection)"},
+        {"flag": "-tags", "description": "Build tags"}
+      ],
+      "examples": ["go build", "go build -o myapp", "go build -race ./cmd/myapp", "go build -ldflags '-s -w' ."],
+      "difficulty": 1
+    },
+    {
+      "command": "go run",
+      "description": "Compile and run a Go program",
+      "category": "build",
+      "topic": "go",
+      "aliases": ["run go program", "execute go file", "run go code"],
+      "flags": [
+        {"flag": "-race", "description": "Enable race detector"}
+      ],
+      "examples": ["go run main.go", "go run .", "go run -race main.go"],
+      "difficulty": 1
+    },
+    {
+      "command": "go test",
+      "description": "Run Go tests",
+      "category": "testing",
+      "topic": "go",
+      "aliases": ["run go tests", "test go project", "execute tests go"],
+      "flags": [
+        {"flag": "-v", "description": "Verbose test output"},
+        {"flag": "-run", "description": "Run tests matching regex"},
+        {"flag": "-count", "description": "Run tests N times"},
+        {"flag": "-race", "description": "Enable race detector"},
+        {"flag": "-cover", "description": "Enable coverage analysis"},
+        {"flag": "-coverprofile", "description": "Write coverage to file"},
+        {"flag": "-bench", "description": "Run benchmarks"},
+        {"flag": "-short", "description": "Skip long-running tests"},
+        {"flag": "./...", "description": "Test all packages"}
+      ],
+      "examples": ["go test ./...", "go test -v", "go test -run TestMyFunc", "go test -cover ./...", "go test -bench ."],
+      "difficulty": 1
+    },
+    {
+      "command": "go mod init",
+      "description": "Initialize a new Go module",
+      "category": "modules",
+      "topic": "go",
+      "aliases": ["create go module", "init go project", "start go module"],
+      "flags": [],
+      "examples": ["go mod init github.com/user/myproject", "go mod init myapp"],
+      "difficulty": 1
+    },
+    {
+      "command": "go mod tidy",
+      "description": "Add missing and remove unused module dependencies",
+      "category": "modules",
+      "topic": "go",
+      "aliases": ["clean up go dependencies", "update go.mod", "tidy dependencies", "fix go modules"],
+      "flags": [
+        {"flag": "-v", "description": "Print information about removed modules"}
+      ],
+      "examples": ["go mod tidy", "go mod tidy -v"],
+      "difficulty": 1
+    },
+    {
+      "command": "go get",
+      "description": "Download and install packages and dependencies",
+      "category": "modules",
+      "topic": "go",
+      "aliases": ["install go package", "add go dependency", "download go module"],
+      "flags": [
+        {"flag": "-u", "description": "Update to latest version"},
+        {"flag": "-t", "description": "Include test dependencies"}
+      ],
+      "examples": ["go get github.com/pkg/errors", "go get -u ./...", "go get github.com/lib/pq@v1.10.0"],
+      "difficulty": 1
+    },
+    {
+      "command": "go fmt",
+      "description": "Format Go source code",
+      "category": "quality",
+      "topic": "go",
+      "aliases": ["format go code", "auto format go", "gofmt"],
+      "flags": [],
+      "examples": ["go fmt ./...", "gofmt -w file.go"],
+      "difficulty": 1
+    },
+    {
+      "command": "go vet",
+      "description": "Run static analysis to find common mistakes",
+      "category": "quality",
+      "topic": "go",
+      "aliases": ["lint go code", "check go code", "go static analysis", "find go bugs"],
+      "flags": [],
+      "examples": ["go vet ./...", "go vet main.go"],
+      "difficulty": 1
+    },
+    {
+      "command": "go generate",
+      "description": "Run code generation commands specified in source files",
+      "category": "build",
+      "topic": "go",
+      "aliases": ["run go generate", "code generation go"],
+      "flags": [
+        {"flag": "-v", "description": "Print commands as they are run"},
+        {"flag": "-run", "description": "Only run generators matching regex"}
+      ],
+      "examples": ["go generate ./...", "go generate -v"],
+      "difficulty": 2
+    },
+    {
+      "command": "go install",
+      "description": "Compile and install a Go binary to $GOPATH/bin",
+      "category": "build",
+      "topic": "go",
+      "aliases": ["install go binary", "install go tool"],
+      "flags": [],
+      "examples": ["go install", "go install golang.org/x/tools/gopls@latest"],
+      "difficulty": 2
+    },
+    {
+      "command": "go doc",
+      "description": "Show documentation for a Go package or symbol",
+      "category": "docs",
+      "topic": "go",
+      "aliases": ["go documentation", "show go docs", "go help"],
+      "flags": [
+        {"flag": "-all", "description": "Show all documentation"},
+        {"flag": "-src", "description": "Show source code"}
+      ],
+      "examples": ["go doc fmt", "go doc fmt.Println", "go doc -all net/http"],
+      "difficulty": 2
+    },
+    {
+      "command": "go mod download",
+      "description": "Download module dependencies to local cache",
+      "category": "modules",
+      "topic": "go",
+      "aliases": ["download go dependencies", "fetch modules", "cache dependencies"],
+      "flags": [],
+      "examples": ["go mod download", "go mod download all"],
+      "difficulty": 2
+    },
+    {
+      "command": "go mod vendor",
+      "description": "Copy dependencies into a vendor directory",
+      "category": "modules",
+      "topic": "go",
+      "aliases": ["vendor dependencies", "create vendor directory"],
+      "flags": [],
+      "examples": ["go mod vendor"],
+      "difficulty": 2
+    },
+    {
+      "command": "go env",
+      "description": "Print Go environment information",
+      "category": "environment",
+      "topic": "go",
+      "aliases": ["go environment", "go settings", "gopath", "goroot"],
+      "flags": [
+        {"flag": "-w", "description": "Write environment variable"},
+        {"flag": "-json", "description": "JSON output"}
+      ],
+      "examples": ["go env", "go env GOPATH", "go env -json", "go env -w GOPROXY=direct"],
+      "difficulty": 1
+    }
+  ]
+}

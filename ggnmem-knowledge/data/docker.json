@@ -1,0 +1,338 @@
+{
+  "topic": "docker",
+  "description": "Docker container management and orchestration",
+  "version": "1.0",
+  "entries": [
+    {
+      "command": "docker ps",
+      "description": "List running containers",
+      "category": "containers",
+      "topic": "docker",
+      "aliases": ["show running containers", "list containers", "what containers are running", "active containers"],
+      "flags": [
+        {"flag": "-a", "description": "Show all containers (including stopped)"},
+        {"flag": "-q", "description": "Only display container IDs"},
+        {"flag": "--format", "description": "Pretty-print using Go template"},
+        {"flag": "-f", "description": "Filter output based on conditions"},
+        {"flag": "--no-trunc", "description": "Don't truncate output"}
+      ],
+      "examples": ["docker ps", "docker ps -a", "docker ps -q", "docker ps --format '{{.Names}}: {{.Status}}'"],
+      "difficulty": 1
+    },
+    {
+      "command": "docker images",
+      "description": "List locally available Docker images",
+      "category": "images",
+      "topic": "docker",
+      "aliases": ["show docker images", "list images", "what images are available", "local images"],
+      "flags": [
+        {"flag": "-a", "description": "Show all images (including intermediate)"},
+        {"flag": "-q", "description": "Only show image IDs"},
+        {"flag": "--filter", "description": "Filter output"},
+        {"flag": "--format", "description": "Pretty-print using Go template"}
+      ],
+      "examples": ["docker images", "docker images -a", "docker images --filter 'dangling=true'"],
+      "difficulty": 1
+    },
+    {
+      "command": "docker run",
+      "description": "Create and start a new container from an image",
+      "category": "containers",
+      "topic": "docker",
+      "aliases": ["start container", "run container", "create and run container", "launch container"],
+      "flags": [
+        {"flag": "-d", "description": "Run in detached (background) mode"},
+        {"flag": "-it", "description": "Interactive mode with TTY"},
+        {"flag": "-p", "description": "Map host port to container port"},
+        {"flag": "-v", "description": "Mount a volume"},
+        {"flag": "--name", "description": "Assign a name to the container"},
+        {"flag": "--rm", "description": "Remove container when it stops"},
+        {"flag": "-e", "description": "Set environment variable"}
+      ],
+      "examples": ["docker run -d -p 8080:80 nginx", "docker run -it ubuntu bash", "docker run --rm --name myapp myimage"],
+      "difficulty": 1
+    },
+    {
+      "command": "docker stop",
+      "description": "Stop one or more running containers",
+      "category": "containers",
+      "topic": "docker",
+      "aliases": ["stop container", "halt container", "shutdown container"],
+      "flags": [
+        {"flag": "-t", "description": "Seconds to wait before killing"}
+      ],
+      "examples": ["docker stop mycontainer", "docker stop $(docker ps -q)"],
+      "difficulty": 1
+    },
+    {
+      "command": "docker rm",
+      "description": "Remove one or more stopped containers",
+      "category": "containers",
+      "topic": "docker",
+      "aliases": ["remove container", "delete container", "clean up containers"],
+      "flags": [
+        {"flag": "-f", "description": "Force remove (even if running)"},
+        {"flag": "-v", "description": "Remove associated volumes"}
+      ],
+      "examples": ["docker rm mycontainer", "docker rm -f mycontainer", "docker rm $(docker ps -aq)"],
+      "difficulty": 1
+    },
+    {
+      "command": "docker build",
+      "description": "Build a Docker image from a Dockerfile",
+      "category": "images",
+      "topic": "docker",
+      "aliases": ["build image", "create image", "build docker image", "build from dockerfile"],
+      "flags": [
+        {"flag": "-t", "description": "Tag the image (name:tag)"},
+        {"flag": "-f", "description": "Specify Dockerfile path"},
+        {"flag": "--no-cache", "description": "Build without using cache"},
+        {"flag": "--build-arg", "description": "Set build-time variables"}
+      ],
+      "examples": ["docker build -t myapp .", "docker build -t myapp:v1.0 -f Dockerfile.prod ."],
+      "difficulty": 1
+    },
+    {
+      "command": "docker pull",
+      "description": "Download an image from a registry",
+      "category": "images",
+      "topic": "docker",
+      "aliases": ["download image", "fetch image", "pull image"],
+      "flags": [
+        {"flag": "--platform", "description": "Set platform (linux/amd64, linux/arm64)"}
+      ],
+      "examples": ["docker pull nginx", "docker pull ubuntu:22.04", "docker pull --platform linux/arm64 node"],
+      "difficulty": 1
+    },
+    {
+      "command": "docker push",
+      "description": "Upload an image to a registry",
+      "category": "images",
+      "topic": "docker",
+      "aliases": ["upload image", "push image", "publish image"],
+      "flags": [],
+      "examples": ["docker push myrepo/myapp:latest"],
+      "difficulty": 2
+    },
+    {
+      "command": "docker logs",
+      "description": "Fetch the logs of a container",
+      "category": "containers",
+      "topic": "docker",
+      "aliases": ["show container logs", "view logs", "container output", "check container logs"],
+      "flags": [
+        {"flag": "-f", "description": "Follow log output (tail -f)"},
+        {"flag": "--tail", "description": "Number of lines to show from end"},
+        {"flag": "--since", "description": "Show logs since timestamp"},
+        {"flag": "-t", "description": "Show timestamps"}
+      ],
+      "examples": ["docker logs mycontainer", "docker logs -f mycontainer", "docker logs --tail 100 mycontainer"],
+      "difficulty": 1
+    },
+    {
+      "command": "docker exec",
+      "description": "Run a command inside a running container",
+      "category": "containers",
+      "topic": "docker",
+      "aliases": ["execute in container", "run command in container", "shell into container", "enter container"],
+      "flags": [
+        {"flag": "-it", "description": "Interactive mode with TTY"},
+        {"flag": "-d", "description": "Run in detached mode"},
+        {"flag": "-u", "description": "Specify username or UID"},
+        {"flag": "-w", "description": "Working directory inside container"}
+      ],
+      "examples": ["docker exec -it mycontainer bash", "docker exec mycontainer ls /app", "docker exec -it mycontainer sh"],
+      "difficulty": 1
+    },
+    {
+      "command": "docker compose up",
+      "description": "Start all services defined in docker-compose.yml",
+      "category": "compose",
+      "topic": "docker",
+      "aliases": ["start compose", "start docker compose", "launch services", "bring up services", "start all services"],
+      "flags": [
+        {"flag": "-d", "description": "Run in detached mode"},
+        {"flag": "--build", "description": "Build images before starting"},
+        {"flag": "--force-recreate", "description": "Recreate containers even if unchanged"},
+        {"flag": "--scale", "description": "Scale a service to N instances"}
+      ],
+      "examples": ["docker compose up -d", "docker compose up --build", "docker compose up -d --force-recreate"],
+      "difficulty": 1
+    },
+    {
+      "command": "docker compose down",
+      "description": "Stop and remove all compose services, networks, and volumes",
+      "category": "compose",
+      "topic": "docker",
+      "aliases": ["stop compose", "stop all services", "tear down services", "shutdown compose"],
+      "flags": [
+        {"flag": "-v", "description": "Remove named volumes"},
+        {"flag": "--rmi all", "description": "Remove all images used by services"}
+      ],
+      "examples": ["docker compose down", "docker compose down -v", "docker compose down --rmi all"],
+      "difficulty": 1
+    },
+    {
+      "command": "docker compose logs",
+      "description": "View output from compose services",
+      "category": "compose",
+      "topic": "docker",
+      "aliases": ["compose logs", "service logs", "view compose logs"],
+      "flags": [
+        {"flag": "-f", "description": "Follow log output"},
+        {"flag": "--tail", "description": "Number of lines from end"}
+      ],
+      "examples": ["docker compose logs", "docker compose logs -f web", "docker compose logs --tail 50"],
+      "difficulty": 1
+    },
+    {
+      "command": "docker network ls",
+      "description": "List all Docker networks",
+      "category": "networking",
+      "topic": "docker",
+      "aliases": ["list networks", "show networks", "docker networks"],
+      "flags": [
+        {"flag": "--filter", "description": "Filter output"},
+        {"flag": "--format", "description": "Pretty-print using Go template"}
+      ],
+      "examples": ["docker network ls", "docker network ls --filter driver=bridge"],
+      "difficulty": 2
+    },
+    {
+      "command": "docker network create",
+      "description": "Create a new Docker network",
+      "category": "networking",
+      "topic": "docker",
+      "aliases": ["create network", "add network", "new network"],
+      "flags": [
+        {"flag": "-d", "description": "Network driver (bridge, overlay, host)"},
+        {"flag": "--subnet", "description": "Subnet in CIDR format"}
+      ],
+      "examples": ["docker network create mynetwork", "docker network create -d overlay myoverlay"],
+      "difficulty": 2
+    },
+    {
+      "command": "docker volume ls",
+      "description": "List all Docker volumes",
+      "category": "volumes",
+      "topic": "docker",
+      "aliases": ["list volumes", "show volumes", "docker volumes"],
+      "flags": [
+        {"flag": "--filter", "description": "Filter output"},
+        {"flag": "-q", "description": "Only display volume names"}
+      ],
+      "examples": ["docker volume ls", "docker volume ls --filter dangling=true"],
+      "difficulty": 2
+    },
+    {
+      "command": "docker volume create",
+      "description": "Create a named Docker volume",
+      "category": "volumes",
+      "topic": "docker",
+      "aliases": ["create volume", "add volume", "new volume"],
+      "flags": [
+        {"flag": "-d", "description": "Volume driver"},
+        {"flag": "--label", "description": "Set metadata labels"}
+      ],
+      "examples": ["docker volume create mydata", "docker volume create --label project=myapp mydata"],
+      "difficulty": 2
+    },
+    {
+      "command": "docker inspect",
+      "description": "Display detailed information about a container or image",
+      "category": "containers",
+      "topic": "docker",
+      "aliases": ["inspect container", "container details", "container info", "image details"],
+      "flags": [
+        {"flag": "--format", "description": "Format output using Go template"},
+        {"flag": "--type", "description": "Specify object type (container, image, network)"}
+      ],
+      "examples": ["docker inspect mycontainer", "docker inspect --format '{{.NetworkSettings.IPAddress}}' mycontainer"],
+      "difficulty": 2
+    },
+    {
+      "command": "docker rmi",
+      "description": "Remove one or more Docker images",
+      "category": "images",
+      "topic": "docker",
+      "aliases": ["remove image", "delete image", "clean up images"],
+      "flags": [
+        {"flag": "-f", "description": "Force removal"}
+      ],
+      "examples": ["docker rmi myimage", "docker rmi $(docker images -q --filter 'dangling=true')"],
+      "difficulty": 1
+    },
+    {
+      "command": "docker system prune",
+      "description": "Remove unused containers, networks, images, and build cache",
+      "category": "system",
+      "topic": "docker",
+      "aliases": ["clean up docker", "docker cleanup", "free docker space", "prune docker"],
+      "flags": [
+        {"flag": "-a", "description": "Remove all unused images, not just dangling"},
+        {"flag": "-f", "description": "Skip confirmation prompt"},
+        {"flag": "--volumes", "description": "Also prune volumes"}
+      ],
+      "examples": ["docker system prune", "docker system prune -af", "docker system prune -a --volumes"],
+      "difficulty": 2
+    },
+    {
+      "command": "docker stats",
+      "description": "Display live resource usage statistics for containers",
+      "category": "containers",
+      "topic": "docker",
+      "aliases": ["container stats", "resource usage", "container memory", "container cpu"],
+      "flags": [
+        {"flag": "--no-stream", "description": "Display only first result"},
+        {"flag": "--format", "description": "Pretty-print using Go template"}
+      ],
+      "examples": ["docker stats", "docker stats --no-stream", "docker stats mycontainer"],
+      "difficulty": 2
+    },
+    {
+      "command": "docker cp",
+      "description": "Copy files between container and local filesystem",
+      "category": "containers",
+      "topic": "docker",
+      "aliases": ["copy to container", "copy from container", "transfer files container"],
+      "flags": [],
+      "examples": ["docker cp myfile.txt mycontainer:/app/", "docker cp mycontainer:/app/log.txt ./log.txt"],
+      "difficulty": 2
+    },
+    {
+      "command": "docker tag",
+      "description": "Create a tag for an image",
+      "category": "images",
+      "topic": "docker",
+      "aliases": ["tag image", "rename image", "label image"],
+      "flags": [],
+      "examples": ["docker tag myapp myrepo/myapp:v1.0", "docker tag abc123 myapp:latest"],
+      "difficulty": 2
+    },
+    {
+      "command": "docker compose ps",
+      "description": "List compose service containers and their status",
+      "category": "compose",
+      "topic": "docker",
+      "aliases": ["compose status", "compose containers", "service status"],
+      "flags": [
+        {"flag": "-a", "description": "Show all containers"},
+        {"flag": "-q", "description": "Only display container IDs"}
+      ],
+      "examples": ["docker compose ps", "docker compose ps -a"],
+      "difficulty": 1
+    },
+    {
+      "command": "docker compose restart",
+      "description": "Restart compose services",
+      "category": "compose",
+      "topic": "docker",
+      "aliases": ["restart services", "restart compose", "reload services"],
+      "flags": [
+        {"flag": "-t", "description": "Shutdown timeout in seconds"}
+      ],
+      "examples": ["docker compose restart", "docker compose restart web"],
+      "difficulty": 1
+    }
+  ]
+}

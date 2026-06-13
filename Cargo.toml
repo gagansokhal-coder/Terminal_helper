@@ -4,6 +4,7 @@ members = [
     "ggnmem-cli",
     "ggnmem-daemon",
     "ggnmem-db",
+    "ggnmem-knowledge",
     "ggnmem-model",
     "ggnmem-pty",
 ]

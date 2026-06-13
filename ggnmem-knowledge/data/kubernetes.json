@@ -1,0 +1,269 @@
+{
+  "topic": "kubernetes",
+  "description": "Kubernetes container orchestration platform (kubectl)",
+  "version": "1.0",
+  "entries": [
+    {
+      "command": "kubectl get pods",
+      "description": "List all pods in the current namespace",
+      "category": "pods",
+      "topic": "kubernetes",
+      "aliases": ["show pods", "list pods", "running pods", "what pods are running", "k8s pods"],
+      "flags": [
+        {"flag": "-A", "description": "All namespaces"},
+        {"flag": "-n", "description": "Specific namespace"},
+        {"flag": "-o wide", "description": "Show extra info (node, IP)"},
+        {"flag": "-o yaml", "description": "Output as YAML"},
+        {"flag": "-o json", "description": "Output as JSON"},
+        {"flag": "-l", "description": "Filter by label selector"},
+        {"flag": "-w", "description": "Watch for changes"}
+      ],
+      "examples": ["kubectl get pods", "kubectl get pods -A", "kubectl get pods -n production", "kubectl get pods -o wide"],
+      "difficulty": 1
+    },
+    {
+      "command": "kubectl get services",
+      "description": "List all services in the current namespace",
+      "category": "services",
+      "topic": "kubernetes",
+      "aliases": ["show services", "list services", "k8s services", "service endpoints"],
+      "flags": [
+        {"flag": "-A", "description": "All namespaces"},
+        {"flag": "-n", "description": "Specific namespace"},
+        {"flag": "-o wide", "description": "Show extra info"}
+      ],
+      "examples": ["kubectl get svc", "kubectl get services -A", "kubectl get svc -n default"],
+      "difficulty": 1
+    },
+    {
+      "command": "kubectl get deployments",
+      "description": "List all deployments in the current namespace",
+      "category": "deployments",
+      "topic": "kubernetes",
+      "aliases": ["show deployments", "list deployments", "k8s deployments", "deployment status"],
+      "flags": [
+        {"flag": "-A", "description": "All namespaces"},
+        {"flag": "-n", "description": "Specific namespace"},
+        {"flag": "-o wide", "description": "Show extra info"}
+      ],
+      "examples": ["kubectl get deploy", "kubectl get deployments -A", "kubectl get deploy -n production"],
+      "difficulty": 1
+    },
+    {
+      "command": "kubectl apply -f",
+      "description": "Apply a configuration from a YAML/JSON file",
+      "category": "management",
+      "topic": "kubernetes",
+      "aliases": ["deploy manifest", "apply yaml", "apply config", "create from file", "deploy to kubernetes"],
+      "flags": [
+        {"flag": "-f", "description": "Filename or directory"},
+        {"flag": "-k", "description": "Kustomize directory"},
+        {"flag": "--dry-run=client", "description": "Preview without applying"},
+        {"flag": "-n", "description": "Target namespace"}
+      ],
+      "examples": ["kubectl apply -f deployment.yaml", "kubectl apply -f k8s/", "kubectl apply -k overlays/prod/"],
+      "difficulty": 1
+    },
+    {
+      "command": "kubectl delete",
+      "description": "Delete Kubernetes resources",
+      "category": "management",
+      "topic": "kubernetes",
+      "aliases": ["delete resource", "remove pod", "delete deployment", "remove service"],
+      "flags": [
+        {"flag": "-f", "description": "Delete from file"},
+        {"flag": "-n", "description": "Namespace"},
+        {"flag": "--force", "description": "Force deletion"},
+        {"flag": "--grace-period=0", "description": "Immediate deletion"}
+      ],
+      "examples": ["kubectl delete pod mypod", "kubectl delete -f deployment.yaml", "kubectl delete pod mypod --force --grace-period=0"],
+      "difficulty": 1
+    },
+    {
+      "command": "kubectl logs",
+      "description": "Print logs from a pod or container",
+      "category": "debugging",
+      "topic": "kubernetes",
+      "aliases": ["pod logs", "container logs", "view pod output", "check pod logs", "k8s logs"],
+      "flags": [
+        {"flag": "-f", "description": "Follow log output"},
+        {"flag": "-c", "description": "Specific container in pod"},
+        {"flag": "--tail", "description": "Lines from end"},
+        {"flag": "--since", "description": "Logs since duration (e.g., 1h)"},
+        {"flag": "-p", "description": "Previous container instance logs"}
+      ],
+      "examples": ["kubectl logs mypod", "kubectl logs -f mypod", "kubectl logs mypod -c mycontainer", "kubectl logs --tail 100 mypod"],
+      "difficulty": 1
+    },
+    {
+      "command": "kubectl describe",
+      "description": "Show detailed information about a resource",
+      "category": "debugging",
+      "topic": "kubernetes",
+      "aliases": ["describe pod", "pod details", "resource details", "pod info", "why pod failing"],
+      "flags": [
+        {"flag": "-n", "description": "Namespace"}
+      ],
+      "examples": ["kubectl describe pod mypod", "kubectl describe node mynode", "kubectl describe svc myservice"],
+      "difficulty": 1
+    },
+    {
+      "command": "kubectl exec",
+      "description": "Execute a command in a running container",
+      "category": "debugging",
+      "topic": "kubernetes",
+      "aliases": ["shell into pod", "exec into pod", "run command in pod", "enter pod"],
+      "flags": [
+        {"flag": "-it", "description": "Interactive TTY"},
+        {"flag": "-c", "description": "Target container"},
+        {"flag": "-n", "description": "Namespace"}
+      ],
+      "examples": ["kubectl exec -it mypod -- bash", "kubectl exec mypod -- ls /app", "kubectl exec -it mypod -c mycontainer -- sh"],
+      "difficulty": 1
+    },
+    {
+      "command": "kubectl get nodes",
+      "description": "List all cluster nodes and their status",
+      "category": "cluster",
+      "topic": "kubernetes",
+      "aliases": ["show nodes", "list nodes", "cluster nodes", "node status"],
+      "flags": [
+        {"flag": "-o wide", "description": "Show extra info (IPs, OS)"}
+      ],
+      "examples": ["kubectl get nodes", "kubectl get nodes -o wide"],
+      "difficulty": 1
+    },
+    {
+      "command": "kubectl get namespaces",
+      "description": "List all namespaces in the cluster",
+      "category": "cluster",
+      "topic": "kubernetes",
+      "aliases": ["show namespaces", "list namespaces", "k8s namespaces"],
+      "flags": [],
+      "examples": ["kubectl get ns", "kubectl get namespaces"],
+      "difficulty": 1
+    },
+    {
+      "command": "kubectl create namespace",
+      "description": "Create a new namespace",
+      "category": "cluster",
+      "topic": "kubernetes",
+      "aliases": ["new namespace", "add namespace", "create ns"],
+      "flags": [],
+      "examples": ["kubectl create namespace staging", "kubectl create ns production"],
+      "difficulty": 1
+    },
+    {
+      "command": "kubectl scale",
+      "description": "Scale the number of replicas for a deployment",
+      "category": "deployments",
+      "topic": "kubernetes",
+      "aliases": ["scale deployment", "change replicas", "scale up", "scale down"],
+      "flags": [
+        {"flag": "--replicas", "description": "Number of replicas"}
+      ],
+      "examples": ["kubectl scale deploy myapp --replicas=3", "kubectl scale deploy myapp --replicas=0"],
+      "difficulty": 2
+    },
+    {
+      "command": "kubectl rollout status",
+      "description": "Check the status of a deployment rollout",
+      "category": "deployments",
+      "topic": "kubernetes",
+      "aliases": ["deployment status", "rollout progress", "check deployment"],
+      "flags": [
+        {"flag": "-w", "description": "Watch until complete"}
+      ],
+      "examples": ["kubectl rollout status deploy/myapp", "kubectl rollout status deploy/myapp -w"],
+      "difficulty": 2
+    },
+    {
+      "command": "kubectl rollout undo",
+      "description": "Rollback a deployment to a previous revision",
+      "category": "deployments",
+      "topic": "kubernetes",
+      "aliases": ["rollback deployment", "undo deployment", "revert deployment"],
+      "flags": [
+        {"flag": "--to-revision", "description": "Rollback to specific revision"}
+      ],
+      "examples": ["kubectl rollout undo deploy/myapp", "kubectl rollout undo deploy/myapp --to-revision=2"],
+      "difficulty": 2
+    },
+    {
+      "command": "kubectl get configmaps",
+      "description": "List ConfigMaps in the current namespace",
+      "category": "config",
+      "topic": "kubernetes",
+      "aliases": ["show configmaps", "list configmaps", "k8s configmaps", "configuration maps"],
+      "flags": [
+        {"flag": "-n", "description": "Namespace"},
+        {"flag": "-o yaml", "description": "Output as YAML"}
+      ],
+      "examples": ["kubectl get cm", "kubectl get configmaps -n default", "kubectl get cm myconfig -o yaml"],
+      "difficulty": 2
+    },
+    {
+      "command": "kubectl get secrets",
+      "description": "List secrets in the current namespace",
+      "category": "config",
+      "topic": "kubernetes",
+      "aliases": ["show secrets", "list secrets", "k8s secrets"],
+      "flags": [
+        {"flag": "-n", "description": "Namespace"},
+        {"flag": "-o yaml", "description": "Output as YAML"}
+      ],
+      "examples": ["kubectl get secrets", "kubectl get secret mysecret -o yaml"],
+      "difficulty": 2
+    },
+    {
+      "command": "kubectl port-forward",
+      "description": "Forward local port to a pod or service",
+      "category": "networking",
+      "topic": "kubernetes",
+      "aliases": ["forward port", "port forwarding", "access pod locally", "expose pod port"],
+      "flags": [
+        {"flag": "--address", "description": "Bind address (default localhost)"}
+      ],
+      "examples": ["kubectl port-forward pod/mypod 8080:80", "kubectl port-forward svc/myservice 3000:3000"],
+      "difficulty": 2
+    },
+    {
+      "command": "kubectl top pods",
+      "description": "Show CPU and memory usage of pods",
+      "category": "debugging",
+      "topic": "kubernetes",
+      "aliases": ["pod resource usage", "pod cpu memory", "pod metrics", "k8s resource usage"],
+      "flags": [
+        {"flag": "-n", "description": "Namespace"},
+        {"flag": "-A", "description": "All namespaces"},
+        {"flag": "--containers", "description": "Show per-container metrics"}
+      ],
+      "examples": ["kubectl top pods", "kubectl top pods -A", "kubectl top pods --containers"],
+      "difficulty": 2
+    },
+    {
+      "command": "kubectl config current-context",
+      "description": "Show the current kubectl context (cluster)",
+      "category": "cluster",
+      "topic": "kubernetes",
+      "aliases": ["current cluster", "which cluster", "active context", "current context"],
+      "flags": [],
+      "examples": ["kubectl config current-context", "kubectl config get-contexts", "kubectl config use-context my-cluster"],
+      "difficulty": 1
+    },
+    {
+      "command": "kubectl get events",
+      "description": "List cluster events (useful for debugging)",
+      "category": "debugging",
+      "topic": "kubernetes",
+      "aliases": ["cluster events", "k8s events", "show events", "what happened"],
+      "flags": [
+        {"flag": "-n", "description": "Namespace"},
+        {"flag": "--sort-by", "description": "Sort by field"},
+        {"flag": "-w", "description": "Watch for new events"}
+      ],
+      "examples": ["kubectl get events", "kubectl get events --sort-by=.lastTimestamp", "kubectl get events -w"],
+      "difficulty": 2
+    }
+  ]
+}

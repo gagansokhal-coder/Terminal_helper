@@ -1,0 +1,206 @@
+{
+  "topic": "cargo",
+  "description": "Rust package manager and build system",
+  "version": "1.0",
+  "entries": [
+    {
+      "command": "cargo build",
+      "description": "Compile the current Rust project",
+      "category": "build",
+      "topic": "cargo",
+      "aliases": ["build rust project", "compile rust", "build project", "compile project"],
+      "flags": [
+        {"flag": "--release", "description": "Build with optimizations"},
+        {"flag": "--target", "description": "Build for specific target triple"},
+        {"flag": "--features", "description": "Enable specific features"},
+        {"flag": "--all-features", "description": "Enable all features"},
+        {"flag": "--workspace", "description": "Build all workspace members"},
+        {"flag": "-p", "description": "Build specific package"}
+      ],
+      "examples": ["cargo build", "cargo build --release", "cargo build -p mylib", "cargo build --target x86_64-unknown-linux-musl"],
+      "difficulty": 1
+    },
+    {
+      "command": "cargo run",
+      "description": "Build and run the current Rust project",
+      "category": "build",
+      "topic": "cargo",
+      "aliases": ["run rust project", "execute project", "run binary"],
+      "flags": [
+        {"flag": "--release", "description": "Run with optimizations"},
+        {"flag": "--bin", "description": "Run specific binary"},
+        {"flag": "--example", "description": "Run an example"},
+        {"flag": "--", "description": "Arguments passed to the binary"}
+      ],
+      "examples": ["cargo run", "cargo run --release", "cargo run -- --verbose", "cargo run --example hello"],
+      "difficulty": 1
+    },
+    {
+      "command": "cargo test",
+      "description": "Run tests for the current project",
+      "category": "testing",
+      "topic": "cargo",
+      "aliases": ["run tests", "test rust project", "run unit tests", "execute tests"],
+      "flags": [
+        {"flag": "--workspace", "description": "Test all workspace members"},
+        {"flag": "--release", "description": "Test in release mode"},
+        {"flag": "-p", "description": "Test specific package"},
+        {"flag": "--lib", "description": "Test library only"},
+        {"flag": "--doc", "description": "Test documentation examples"},
+        {"flag": "--", "description": "Arguments passed to test harness"},
+        {"flag": "-- --nocapture", "description": "Show stdout from tests"}
+      ],
+      "examples": ["cargo test", "cargo test --workspace", "cargo test test_name", "cargo test -- --nocapture"],
+      "difficulty": 1
+    },
+    {
+      "command": "cargo check",
+      "description": "Check compilation without producing binaries (faster than build)",
+      "category": "build",
+      "topic": "cargo",
+      "aliases": ["check rust code", "verify compilation", "check for errors", "fast compile check"],
+      "flags": [
+        {"flag": "--workspace", "description": "Check all workspace members"},
+        {"flag": "--all-features", "description": "Enable all features"}
+      ],
+      "examples": ["cargo check", "cargo check --workspace"],
+      "difficulty": 1
+    },
+    {
+      "command": "cargo clippy",
+      "description": "Run Clippy linter for Rust code quality suggestions",
+      "category": "quality",
+      "topic": "cargo",
+      "aliases": ["lint rust code", "code quality", "check code style", "rust linter"],
+      "flags": [
+        {"flag": "--workspace", "description": "Lint all workspace members"},
+        {"flag": "--fix", "description": "Automatically fix suggestions"},
+        {"flag": "-- -D warnings", "description": "Treat warnings as errors"}
+      ],
+      "examples": ["cargo clippy", "cargo clippy --workspace", "cargo clippy -- -D warnings", "cargo clippy --fix"],
+      "difficulty": 1
+    },
+    {
+      "command": "cargo fmt",
+      "description": "Format Rust code according to style guidelines",
+      "category": "quality",
+      "topic": "cargo",
+      "aliases": ["format rust code", "auto format", "code formatting", "rustfmt"],
+      "flags": [
+        {"flag": "--check", "description": "Check formatting without modifying"},
+        {"flag": "--all", "description": "Format all packages in workspace"}
+      ],
+      "examples": ["cargo fmt", "cargo fmt --check", "cargo fmt --all"],
+      "difficulty": 1
+    },
+    {
+      "command": "cargo new",
+      "description": "Create a new Rust project",
+      "category": "project",
+      "topic": "cargo",
+      "aliases": ["create rust project", "new rust project", "init rust project", "start rust project"],
+      "flags": [
+        {"flag": "--lib", "description": "Create a library project"},
+        {"flag": "--bin", "description": "Create a binary project (default)"},
+        {"flag": "--name", "description": "Set package name"},
+        {"flag": "--edition", "description": "Set Rust edition (2021)"}
+      ],
+      "examples": ["cargo new myproject", "cargo new mylib --lib", "cargo init"],
+      "difficulty": 1
+    },
+    {
+      "command": "cargo add",
+      "description": "Add a dependency to Cargo.toml",
+      "category": "dependencies",
+      "topic": "cargo",
+      "aliases": ["add dependency", "add crate", "install package", "add library"],
+      "flags": [
+        {"flag": "--dev", "description": "Add as dev dependency"},
+        {"flag": "--features", "description": "Enable specific features"},
+        {"flag": "--optional", "description": "Mark as optional dependency"}
+      ],
+      "examples": ["cargo add serde", "cargo add serde --features derive", "cargo add tokio --features full", "cargo add rand --dev"],
+      "difficulty": 1
+    },
+    {
+      "command": "cargo update",
+      "description": "Update dependencies in Cargo.lock",
+      "category": "dependencies",
+      "topic": "cargo",
+      "aliases": ["update dependencies", "update packages", "refresh lock file"],
+      "flags": [
+        {"flag": "-p", "description": "Update specific package"},
+        {"flag": "--dry-run", "description": "Show what would be updated"}
+      ],
+      "examples": ["cargo update", "cargo update -p serde", "cargo update --dry-run"],
+      "difficulty": 2
+    },
+    {
+      "command": "cargo doc",
+      "description": "Build documentation for the project and dependencies",
+      "category": "docs",
+      "topic": "cargo",
+      "aliases": ["generate docs", "build documentation", "rust docs"],
+      "flags": [
+        {"flag": "--open", "description": "Open docs in browser"},
+        {"flag": "--no-deps", "description": "Skip dependency docs"},
+        {"flag": "--document-private-items", "description": "Include private items"}
+      ],
+      "examples": ["cargo doc --open", "cargo doc --no-deps", "cargo doc --document-private-items"],
+      "difficulty": 2
+    },
+    {
+      "command": "cargo bench",
+      "description": "Run benchmarks for the project",
+      "category": "testing",
+      "topic": "cargo",
+      "aliases": ["run benchmarks", "performance test", "benchmark rust"],
+      "flags": [
+        {"flag": "--bench", "description": "Run specific benchmark"},
+        {"flag": "-p", "description": "Benchmark specific package"}
+      ],
+      "examples": ["cargo bench", "cargo bench -- bench_name"],
+      "difficulty": 3
+    },
+    {
+      "command": "cargo publish",
+      "description": "Publish a crate to crates.io",
+      "category": "publishing",
+      "topic": "cargo",
+      "aliases": ["publish crate", "release crate", "upload to crates.io"],
+      "flags": [
+        {"flag": "--dry-run", "description": "Check without publishing"},
+        {"flag": "--allow-dirty", "description": "Allow uncommitted changes"}
+      ],
+      "examples": ["cargo publish", "cargo publish --dry-run"],
+      "difficulty": 3
+    },
+    {
+      "command": "cargo clean",
+      "description": "Remove the target directory (build artifacts)",
+      "category": "build",
+      "topic": "cargo",
+      "aliases": ["clean build", "remove build artifacts", "clear target", "clean project"],
+      "flags": [
+        {"flag": "--release", "description": "Clean only release artifacts"},
+        {"flag": "-p", "description": "Clean specific package"}
+      ],
+      "examples": ["cargo clean", "cargo clean --release"],
+      "difficulty": 1
+    },
+    {
+      "command": "cargo tree",
+      "description": "Display the dependency tree",
+      "category": "dependencies",
+      "topic": "cargo",
+      "aliases": ["dependency tree", "show dependencies", "list dependencies", "dep graph"],
+      "flags": [
+        {"flag": "-i", "description": "Invert: show what depends on a crate"},
+        {"flag": "--depth", "description": "Max display depth"},
+        {"flag": "-d", "description": "Show duplicate dependencies"}
+      ],
+      "examples": ["cargo tree", "cargo tree -d", "cargo tree -i serde", "cargo tree --depth 2"],
+      "difficulty": 2
+    }
+  ]
+}

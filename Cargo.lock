@@ -556,6 +556,7 @@ dependencies = [
  "ggnmem-ai",
  "ggnmem-daemon",
  "ggnmem-db",
+ "ggnmem-knowledge",
  "ratatui",
  "serde",
  "serde_json",
@@ -592,6 +593,16 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "uuid",
+]
+
+[[package]]
+name = "ggnmem-knowledge"
+version = "0.3.0-alpha"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

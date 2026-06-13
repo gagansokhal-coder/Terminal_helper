@@ -1,0 +1,429 @@
+{
+  "topic": "linux",
+  "description": "Linux system administration and command-line essentials",
+  "version": "1.0",
+  "entries": [
+    {
+      "command": "ls",
+      "description": "List directory contents",
+      "category": "files",
+      "topic": "linux",
+      "aliases": ["list files", "show files", "directory listing", "what files are here"],
+      "flags": [
+        {"flag": "-l", "description": "Long format with details"},
+        {"flag": "-a", "description": "Show hidden files"},
+        {"flag": "-h", "description": "Human-readable file sizes"},
+        {"flag": "-R", "description": "Recursive listing"},
+        {"flag": "-t", "description": "Sort by modification time"}
+      ],
+      "examples": ["ls", "ls -la", "ls -lah", "ls -lt"],
+      "difficulty": 1
+    },
+    {
+      "command": "cd",
+      "description": "Change the current working directory",
+      "category": "files",
+      "topic": "linux",
+      "aliases": ["change directory", "go to directory", "navigate to folder"],
+      "flags": [],
+      "examples": ["cd /var/log", "cd ~", "cd ..", "cd -"],
+      "difficulty": 1
+    },
+    {
+      "command": "pwd",
+      "description": "Print the current working directory",
+      "category": "files",
+      "topic": "linux",
+      "aliases": ["current directory", "where am I", "show current path", "print working directory"],
+      "flags": [],
+      "examples": ["pwd"],
+      "difficulty": 1
+    },
+    {
+      "command": "cat",
+      "description": "Display file contents",
+      "category": "files",
+      "topic": "linux",
+      "aliases": ["show file contents", "read file", "display file", "view file"],
+      "flags": [
+        {"flag": "-n", "description": "Number all output lines"},
+        {"flag": "-b", "description": "Number non-blank lines"}
+      ],
+      "examples": ["cat file.txt", "cat -n file.txt", "cat file1.txt file2.txt"],
+      "difficulty": 1
+    },
+    {
+      "command": "grep",
+      "description": "Search for patterns in files or input",
+      "category": "text",
+      "topic": "linux",
+      "aliases": ["search in files", "find text", "search pattern", "find string in file"],
+      "flags": [
+        {"flag": "-r", "description": "Recursive search"},
+        {"flag": "-i", "description": "Case-insensitive search"},
+        {"flag": "-n", "description": "Show line numbers"},
+        {"flag": "-l", "description": "Show only filenames"},
+        {"flag": "-v", "description": "Invert match"},
+        {"flag": "-c", "description": "Count matching lines"}
+      ],
+      "examples": ["grep 'error' log.txt", "grep -rn 'TODO' src/", "grep -i 'warning' *.log"],
+      "difficulty": 1
+    },
+    {
+      "command": "find",
+      "description": "Search for files in a directory hierarchy",
+      "category": "files",
+      "topic": "linux",
+      "aliases": ["find files", "search for file", "locate file", "find by name"],
+      "flags": [
+        {"flag": "-name", "description": "Search by filename pattern"},
+        {"flag": "-type", "description": "Filter by type (f=file, d=directory)"},
+        {"flag": "-size", "description": "Filter by size"},
+        {"flag": "-mtime", "description": "Filter by modification time"},
+        {"flag": "-exec", "description": "Execute command on results"}
+      ],
+      "examples": ["find . -name '*.rs'", "find /var -type f -size +100M", "find . -name '*.log' -mtime +30 -delete"],
+      "difficulty": 1
+    },
+    {
+      "command": "cp",
+      "description": "Copy files and directories",
+      "category": "files",
+      "topic": "linux",
+      "aliases": ["copy file", "duplicate file", "copy directory"],
+      "flags": [
+        {"flag": "-r", "description": "Copy directories recursively"},
+        {"flag": "-v", "description": "Verbose output"},
+        {"flag": "-i", "description": "Prompt before overwrite"},
+        {"flag": "-p", "description": "Preserve permissions and timestamps"}
+      ],
+      "examples": ["cp file.txt backup.txt", "cp -r src/ backup/", "cp -rv /data/ /backup/"],
+      "difficulty": 1
+    },
+    {
+      "command": "mv",
+      "description": "Move or rename files and directories",
+      "category": "files",
+      "topic": "linux",
+      "aliases": ["move file", "rename file", "relocate file"],
+      "flags": [
+        {"flag": "-i", "description": "Prompt before overwrite"},
+        {"flag": "-v", "description": "Verbose output"}
+      ],
+      "examples": ["mv old.txt new.txt", "mv file.txt /tmp/", "mv -v *.log /archive/"],
+      "difficulty": 1
+    },
+    {
+      "command": "rm",
+      "description": "Remove files or directories",
+      "category": "files",
+      "topic": "linux",
+      "aliases": ["delete file", "remove file", "delete directory"],
+      "flags": [
+        {"flag": "-r", "description": "Remove directories recursively"},
+        {"flag": "-f", "description": "Force removal without prompting"},
+        {"flag": "-i", "description": "Prompt before each removal"},
+        {"flag": "-v", "description": "Verbose output"}
+      ],
+      "examples": ["rm file.txt", "rm -rf /tmp/old/", "rm -i *.log"],
+      "difficulty": 1
+    },
+    {
+      "command": "chmod",
+      "description": "Change file permissions",
+      "category": "permissions",
+      "topic": "linux",
+      "aliases": ["change permissions", "set permissions", "make executable", "file permissions"],
+      "flags": [
+        {"flag": "-R", "description": "Apply recursively"},
+        {"flag": "+x", "description": "Add execute permission"},
+        {"flag": "-v", "description": "Verbose output"}
+      ],
+      "examples": ["chmod +x script.sh", "chmod 755 script.sh", "chmod -R 644 /var/www/"],
+      "difficulty": 2
+    },
+    {
+      "command": "chown",
+      "description": "Change file owner and group",
+      "category": "permissions",
+      "topic": "linux",
+      "aliases": ["change owner", "change file ownership", "set owner"],
+      "flags": [
+        {"flag": "-R", "description": "Apply recursively"},
+        {"flag": "-v", "description": "Verbose output"}
+      ],
+      "examples": ["chown user:group file.txt", "chown -R www-data:www-data /var/www/"],
+      "difficulty": 2
+    },
+    {
+      "command": "ps aux",
+      "description": "List all running processes with details",
+      "category": "processes",
+      "topic": "linux",
+      "aliases": ["show processes", "list processes", "running processes", "what is running"],
+      "flags": [],
+      "examples": ["ps aux", "ps aux | grep nginx", "ps aux --sort=-%mem"],
+      "difficulty": 1
+    },
+    {
+      "command": "top",
+      "description": "Display real-time system resource usage and processes",
+      "category": "processes",
+      "topic": "linux",
+      "aliases": ["system monitor", "process monitor", "cpu usage", "memory usage", "task manager"],
+      "flags": [
+        {"flag": "-d", "description": "Update delay in seconds"},
+        {"flag": "-p", "description": "Monitor specific PID"},
+        {"flag": "-u", "description": "Show only processes for user"}
+      ],
+      "examples": ["top", "top -d 1", "htop"],
+      "difficulty": 1
+    },
+    {
+      "command": "kill",
+      "description": "Send a signal to a process (default: SIGTERM)",
+      "category": "processes",
+      "topic": "linux",
+      "aliases": ["stop process", "terminate process", "kill process", "end process"],
+      "flags": [
+        {"flag": "-9", "description": "Force kill (SIGKILL)"},
+        {"flag": "-15", "description": "Graceful termination (SIGTERM)"}
+      ],
+      "examples": ["kill 1234", "kill -9 1234", "killall nginx"],
+      "difficulty": 1
+    },
+    {
+      "command": "df -h",
+      "description": "Show disk space usage for all mounted filesystems",
+      "category": "disk",
+      "topic": "linux",
+      "aliases": ["disk space", "disk usage", "free disk space", "how much disk space", "storage usage"],
+      "flags": [
+        {"flag": "-h", "description": "Human-readable sizes"},
+        {"flag": "-T", "description": "Show filesystem type"},
+        {"flag": "-i", "description": "Show inode usage"}
+      ],
+      "examples": ["df -h", "df -hT", "df -h /home"],
+      "difficulty": 1
+    },
+    {
+      "command": "du -sh",
+      "description": "Show total size of a directory",
+      "category": "disk",
+      "topic": "linux",
+      "aliases": ["directory size", "folder size", "how big is directory"],
+      "flags": [
+        {"flag": "-s", "description": "Summary only (total)"},
+        {"flag": "-h", "description": "Human-readable sizes"},
+        {"flag": "--max-depth", "description": "Limit directory depth"}
+      ],
+      "examples": ["du -sh .", "du -sh /var/log", "du -h --max-depth=1 /home"],
+      "difficulty": 1
+    },
+    {
+      "command": "free -h",
+      "description": "Display amount of free and used memory",
+      "category": "system",
+      "topic": "linux",
+      "aliases": ["memory usage", "ram usage", "how much memory", "available memory", "free memory"],
+      "flags": [
+        {"flag": "-h", "description": "Human-readable output"},
+        {"flag": "-m", "description": "Display in megabytes"},
+        {"flag": "-g", "description": "Display in gigabytes"}
+      ],
+      "examples": ["free -h", "free -m"],
+      "difficulty": 1
+    },
+    {
+      "command": "uname -a",
+      "description": "Print system information (kernel, hostname, architecture)",
+      "category": "system",
+      "topic": "linux",
+      "aliases": ["system info", "kernel version", "os info", "system details"],
+      "flags": [
+        {"flag": "-a", "description": "All information"},
+        {"flag": "-r", "description": "Kernel release"},
+        {"flag": "-m", "description": "Machine hardware name"}
+      ],
+      "examples": ["uname -a", "uname -r"],
+      "difficulty": 1
+    },
+    {
+      "command": "ss -tulpn",
+      "description": "Show listening ports and associated processes",
+      "category": "networking",
+      "topic": "linux",
+      "aliases": ["show open ports", "listening ports", "what ports are open", "check ports", "network ports"],
+      "flags": [
+        {"flag": "-t", "description": "TCP sockets"},
+        {"flag": "-u", "description": "UDP sockets"},
+        {"flag": "-l", "description": "Listening sockets only"},
+        {"flag": "-p", "description": "Show process using socket"},
+        {"flag": "-n", "description": "Numeric output (no DNS resolution)"}
+      ],
+      "examples": ["ss -tulpn", "ss -tlnp", "ss -tulpn | grep :8080"],
+      "difficulty": 2
+    },
+    {
+      "command": "curl",
+      "description": "Transfer data from or to a server using various protocols",
+      "category": "networking",
+      "topic": "linux",
+      "aliases": ["http request", "download url", "api call", "make request", "fetch url"],
+      "flags": [
+        {"flag": "-X", "description": "HTTP method (GET, POST, PUT, DELETE)"},
+        {"flag": "-H", "description": "Add header"},
+        {"flag": "-d", "description": "POST data"},
+        {"flag": "-o", "description": "Output to file"},
+        {"flag": "-s", "description": "Silent mode"},
+        {"flag": "-v", "description": "Verbose output"},
+        {"flag": "-L", "description": "Follow redirects"}
+      ],
+      "examples": ["curl https://api.example.com", "curl -X POST -d '{\"key\":\"val\"}' -H 'Content-Type: application/json' url"],
+      "difficulty": 1
+    },
+    {
+      "command": "tar",
+      "description": "Create or extract archive files",
+      "category": "files",
+      "topic": "linux",
+      "aliases": ["create archive", "extract archive", "compress files", "untar", "unzip tar"],
+      "flags": [
+        {"flag": "-c", "description": "Create archive"},
+        {"flag": "-x", "description": "Extract archive"},
+        {"flag": "-z", "description": "Gzip compression"},
+        {"flag": "-v", "description": "Verbose output"},
+        {"flag": "-f", "description": "Archive filename"}
+      ],
+      "examples": ["tar -czf archive.tar.gz dir/", "tar -xzf archive.tar.gz", "tar -xf archive.tar"],
+      "difficulty": 1
+    },
+    {
+      "command": "systemctl",
+      "description": "Control systemd services",
+      "category": "systemd",
+      "topic": "linux",
+      "aliases": ["manage service", "start service", "stop service", "restart service", "service status"],
+      "flags": [
+        {"flag": "start", "description": "Start a service"},
+        {"flag": "stop", "description": "Stop a service"},
+        {"flag": "restart", "description": "Restart a service"},
+        {"flag": "status", "description": "Show service status"},
+        {"flag": "enable", "description": "Enable on boot"},
+        {"flag": "disable", "description": "Disable on boot"}
+      ],
+      "examples": ["systemctl status nginx", "systemctl restart nginx", "systemctl enable nginx"],
+      "difficulty": 2
+    },
+    {
+      "command": "journalctl",
+      "description": "Query and display systemd journal logs",
+      "category": "systemd",
+      "topic": "linux",
+      "aliases": ["system logs", "journal logs", "service logs", "view system logs"],
+      "flags": [
+        {"flag": "-u", "description": "Show logs for specific unit"},
+        {"flag": "-f", "description": "Follow new entries (like tail -f)"},
+        {"flag": "--since", "description": "Show entries since timestamp"},
+        {"flag": "-n", "description": "Show last N entries"},
+        {"flag": "-b", "description": "Show logs from current boot"}
+      ],
+      "examples": ["journalctl -u nginx", "journalctl -f", "journalctl --since '1 hour ago'", "journalctl -u sshd -n 50"],
+      "difficulty": 2
+    },
+    {
+      "command": "tail -f",
+      "description": "Output the last part of a file and follow new additions",
+      "category": "text",
+      "topic": "linux",
+      "aliases": ["follow log file", "watch file changes", "tail log", "monitor log"],
+      "flags": [
+        {"flag": "-f", "description": "Follow new output"},
+        {"flag": "-n", "description": "Output last N lines"}
+      ],
+      "examples": ["tail -f /var/log/syslog", "tail -n 100 log.txt", "tail -f app.log | grep ERROR"],
+      "difficulty": 1
+    },
+    {
+      "command": "head",
+      "description": "Output the first part of a file",
+      "category": "text",
+      "topic": "linux",
+      "aliases": ["show first lines", "beginning of file", "top of file"],
+      "flags": [
+        {"flag": "-n", "description": "Output first N lines"}
+      ],
+      "examples": ["head file.txt", "head -n 20 file.txt"],
+      "difficulty": 1
+    },
+    {
+      "command": "wc",
+      "description": "Count lines, words, and characters in a file",
+      "category": "text",
+      "topic": "linux",
+      "aliases": ["count lines", "line count", "word count", "how many lines"],
+      "flags": [
+        {"flag": "-l", "description": "Count lines only"},
+        {"flag": "-w", "description": "Count words only"},
+        {"flag": "-c", "description": "Count bytes"}
+      ],
+      "examples": ["wc -l file.txt", "wc -w file.txt", "find . -name '*.rs' | xargs wc -l"],
+      "difficulty": 1
+    },
+    {
+      "command": "sed",
+      "description": "Stream editor for filtering and transforming text",
+      "category": "text",
+      "topic": "linux",
+      "aliases": ["find and replace", "text substitution", "replace text in file"],
+      "flags": [
+        {"flag": "-i", "description": "Edit file in-place"},
+        {"flag": "-e", "description": "Add script command"},
+        {"flag": "-n", "description": "Suppress automatic printing"}
+      ],
+      "examples": ["sed 's/old/new/g' file.txt", "sed -i 's/foo/bar/g' file.txt", "sed -n '10,20p' file.txt"],
+      "difficulty": 2
+    },
+    {
+      "command": "awk",
+      "description": "Pattern scanning and processing language for text",
+      "category": "text",
+      "topic": "linux",
+      "aliases": ["extract columns", "process text", "column extraction", "text processing"],
+      "flags": [
+        {"flag": "-F", "description": "Field separator"}
+      ],
+      "examples": ["awk '{print $1}' file.txt", "awk -F: '{print $1}' /etc/passwd", "awk '/error/ {print}' log.txt"],
+      "difficulty": 2
+    },
+    {
+      "command": "ssh",
+      "description": "Connect to a remote machine via SSH",
+      "category": "networking",
+      "topic": "linux",
+      "aliases": ["remote login", "connect to server", "ssh into server", "remote shell"],
+      "flags": [
+        {"flag": "-p", "description": "Port number"},
+        {"flag": "-i", "description": "Identity file (private key)"},
+        {"flag": "-L", "description": "Local port forwarding"},
+        {"flag": "-v", "description": "Verbose mode"}
+      ],
+      "examples": ["ssh user@host", "ssh -p 2222 user@host", "ssh -i key.pem user@host"],
+      "difficulty": 1
+    },
+    {
+      "command": "scp",
+      "description": "Securely copy files between hosts over SSH",
+      "category": "networking",
+      "topic": "linux",
+      "aliases": ["copy files to server", "copy files from server", "remote copy", "transfer files ssh"],
+      "flags": [
+        {"flag": "-r", "description": "Copy directories recursively"},
+        {"flag": "-P", "description": "Port number"},
+        {"flag": "-i", "description": "Identity file"}
+      ],
+      "examples": ["scp file.txt user@host:/path/", "scp user@host:/path/file.txt .", "scp -r dir/ user@host:/path/"],
+      "difficulty": 2
+    }
+  ]
+}
