@@ -33,6 +33,7 @@ use crate::vector::EMBEDDING_DIMENSIONS;
 pub struct MiniLmEmbeddingProvider {
     session: Arc<Mutex<Session>>,
     tokenizer: Arc<Tokenizer>,
+    model_name: String,
 }
 
 // Manual Clone because Arc<Mutex<Session>>/Arc<Tokenizer> are cheap to clone.
@@ -41,6 +42,7 @@ impl Clone for MiniLmEmbeddingProvider {
         Self {
             session: Arc::clone(&self.session),
             tokenizer: Arc::clone(&self.tokenizer),
+            model_name: self.model_name.clone(),
         }
     }
 }
@@ -54,6 +56,22 @@ impl MiniLmEmbeddingProvider {
     ///
     /// Returns an error if either file is missing or cannot be loaded.
     pub fn load(model_dir: &Path) -> AiResult<Self> {
+        Self::load_with_name(model_dir, None)
+    }
+
+    /// Load the ONNX model and tokenizer from a directory with an explicit model name.
+    ///
+    /// If `name` is `None`, the directory basename is used as the model name.
+    pub fn load_with_name(model_dir: &Path, name: Option<&str>) -> AiResult<Self> {
+        let model_name = name
+            .map(|n| n.to_owned())
+            .unwrap_or_else(|| {
+                model_dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_owned()
+            });
         let model_path = model_dir.join("model.onnx");
         let tokenizer_path = model_dir.join("tokenizer.json");
 
@@ -85,6 +103,7 @@ impl MiniLmEmbeddingProvider {
         Ok(Self {
             session: Arc::new(Mutex::new(session)),
             tokenizer: Arc::new(tokenizer),
+            model_name,
         })
     }
 
@@ -197,7 +216,7 @@ impl EmbeddingProvider for MiniLmEmbeddingProvider {
     }
 
     fn model_name(&self) -> &str {
-        "all-MiniLM-L6-v2"
+        &self.model_name
     }
 }
 

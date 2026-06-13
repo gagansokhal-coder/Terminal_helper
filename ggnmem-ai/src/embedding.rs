@@ -260,6 +260,7 @@ impl EmbeddingPipeline {
 ///    `model_dir`, loads `MiniLmEmbeddingProvider` for neural inference.
 /// 2. Otherwise, falls back to `NgramEmbeddingProvider` (lexical only).
 ///
+/// Supports multiple models (all-MiniLM-L6-v2, bge-small-en-v1.5).
 /// This is the single decision point for embedding backend selection.
 pub fn create_provider(
     models_dir: &std::path::Path,
@@ -269,8 +270,16 @@ pub fn create_provider(
     {
         let model_dir = models_dir.join(model_name);
         if crate::onnx::has_onnx_model(&model_dir) {
-            match crate::onnx::MiniLmEmbeddingProvider::load(&model_dir) {
-                Ok(provider) => return (Box::new(provider), "MiniLM ONNX"),
+            match crate::onnx::MiniLmEmbeddingProvider::load_with_name(&model_dir, Some(model_name))
+            {
+                Ok(provider) => {
+                    let provider_name = if model_name.contains("bge") {
+                        "BGE Small ONNX"
+                    } else {
+                        "MiniLM ONNX"
+                    };
+                    return (Box::new(provider), provider_name);
+                }
                 Err(_) => { /* fall through to ngram */ }
             }
         }
