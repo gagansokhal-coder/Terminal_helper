@@ -51,6 +51,10 @@ async fn main() -> Result<()> {
         Some("ai") => cmd_ai(&args),
         Some("semantic") => semantic(&args).await,
         Some("upgrade") => upgrade::cmd_upgrade(&args),
+        Some("ask") => cmd_ask(&args),
+        Some("explain") => cmd_explain(&args),
+        Some("learn") => cmd_learn(&args),
+        Some("knowledge") => cmd_knowledge(&args),
         Some(command) => bail!("unknown command: {command}"),
         None => {
             print_usage();
@@ -79,6 +83,13 @@ fn print_usage() {
     println!("  cleanup [flag]   Remove commands (--internal, --duplicates, --failed, --older-than DAYS)");
     println!("  export           Export command history (--format json|csv)");
     println!();
+    println!("knowledge base:");
+    println!("  ask <query>      Get command suggestions from knowledge base");
+    println!("  explain <cmd>    Explain a command (purpose, flags, examples)");
+    println!("  learn <topic>    Learn commands for a topic (docker, git, linux, cargo, go, kubernetes)");
+    println!("  knowledge list   List all loaded knowledge packs");
+    println!("  knowledge validate Validate custom knowledge packs");
+    println!();
     println!("daemon:");
     println!("  start            Start the daemon in background");
     println!("  stop             Stop the running daemon");
@@ -100,6 +111,8 @@ fn print_usage() {
     println!("  ai models        List available/installed models");
     println!("  ai install [M]   Install an embedding model (interactive if no model given)");
     println!("  ai remove M      Remove an installed model");
+    println!("  ai use M         Switch the active embedding model");
+    println!("  ai benchmark     Compare installed models performance");
     println!("  ai setup         Guided AI setup wizard");
     println!("  ai doctor        Run AI diagnostics");
     println!("  ai verify-model  Verify model loads and produces embeddings");
@@ -162,11 +175,13 @@ fn cmd_ai(args: &[String]) -> Result<()> {
         Some("models") => ai_models(),
         Some("install") => ai_install(args),
         Some("remove") => ai_remove(args),
+        Some("use") => ai_use(args),
+        Some("benchmark") => ai_benchmark(),
         Some("setup") => ai_setup(),
         Some("doctor") => ai_doctor(),
         Some("verify-model") => ai_verify_model(args),
         Some("reindex") => ai_reindex(),
-        Some(sub) => bail!("unknown ai subcommand: {sub}\n\nusage:\n  ggnmem ai status\n  ggnmem ai enable\n  ggnmem ai disable\n  ggnmem ai models\n  ggnmem ai install [model]\n  ggnmem ai remove <model>\n  ggnmem ai setup\n  ggnmem ai doctor\n  ggnmem ai verify-model\n  ggnmem ai reindex"),
+        Some(sub) => bail!("unknown ai subcommand: {sub}\n\nusage:\n  ggnmem ai status\n  ggnmem ai enable\n  ggnmem ai disable\n  ggnmem ai models\n  ggnmem ai install [model]\n  ggnmem ai remove <model>\n  ggnmem ai use <model>\n  ggnmem ai benchmark\n  ggnmem ai setup\n  ggnmem ai doctor\n  ggnmem ai verify-model\n  ggnmem ai reindex"),
     }
 }
 
@@ -955,6 +970,25 @@ async fn search(args: &[String]) -> Result<()> {
         DaemonResponseKind::SearchResults { results, .. } => {
             if results.is_empty() {
                 println!("no matching commands found for: {query}");
+
+                // ── Knowledge Base fallback ──
+                let kb = ggnmem_knowledge::KnowledgeBase::new();
+                let suggestions = kb.ask(&query, 3);
+                if !suggestions.is_empty() {
+                    println!();
+                    println!("  ─── Knowledge Base Suggestions ───");
+                    println!();
+                    for s in &suggestions {
+                        let conf = ggnmem_knowledge::format_confidence(s.confidence);
+                        println!("  Suggested:    {}", s.command);
+                        println!("  Description:  {}", s.description);
+                        println!("  Category:     {} / {}", s.topic, s.category);
+                        println!("  Confidence:   {conf}");
+                        println!("  Source:        {}", s.source);
+                        println!();
+                    }
+                }
+
                 return Ok(());
             }
 
@@ -1024,6 +1058,40 @@ async fn search(args: &[String]) -> Result<()> {
                     println!("         (run {} times)", result.run_count);
                 }
                 println!();
+            }
+
+            // ── Knowledge Base supplement ──
+            // Show KB suggestions when all results are low-quality partial
+            // matches (no exact or FTS match), or when there are very few results.
+            // This makes the KB fallback actually useful since FTS partial
+            // matching almost always returns _something_.
+            if !json_output {
+                let has_strong_match = results.iter().any(|r| {
+                    matches!(
+                        r.match_kind,
+                        ggnmem_db::MatchKind::Exact | ggnmem_db::MatchKind::Prefix
+                    )
+                });
+                let best_score = results.first().map(|r| r.score).unwrap_or(0.0);
+
+                if !has_strong_match || best_score < 0.5 {
+                    let kb = ggnmem_knowledge::KnowledgeBase::new();
+                    let suggestions = kb.ask(&query, 3);
+                    // Only show if the KB has confident matches.
+                    let good_suggestions: Vec<_> = suggestions
+                        .into_iter()
+                        .filter(|s| s.confidence >= 0.5)
+                        .collect();
+                    if !good_suggestions.is_empty() {
+                        println!("  ─── Knowledge Base Suggestions ───");
+                        println!();
+                        for s in &good_suggestions {
+                            let conf = ggnmem_knowledge::format_confidence(s.confidence);
+                            println!("    $ {:<30} {} ({})", s.command, s.description, conf);
+                        }
+                        println!();
+                    }
+                }
             }
 
             Ok(())
@@ -1255,7 +1323,11 @@ fn ai_status() -> Result<()> {
     // Determine provider type.
     let has_real_model = mgr.has_real_model_files(&ai_cfg.model_name);
     let provider_name = if has_real_model {
-        "MiniLM ONNX"
+        if ai_cfg.model_name.contains("bge") {
+            "BGE Small ONNX"
+        } else {
+            "MiniLM ONNX"
+        }
     } else {
         "N-gram (fallback)"
     };
@@ -1265,44 +1337,71 @@ fn ai_status() -> Result<()> {
         "feature hashing"
     };
 
+    // Get model dimensions from registry.
+    let dimensions = mgr
+        .get_model(&ai_cfg.model_name)
+        .map(|m| m.dimensions)
+        .unwrap_or(384);
+
     println!("ggnmem ai status");
-    println!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
+    println!("─────────────────────────────────");
     println!(
         "  ai_enabled       ... {}",
         if ai_cfg.enabled {
-            "\u{2713} true"
+            "✓ true"
         } else {
-            "\u{2717} false"
+            "✗ false"
         }
     );
     println!(
         "  semantic_search  ... {}",
         if ai_cfg.semantic_search {
-            "\u{2713} true"
+            "✓ true"
         } else {
-            "\u{2717} false"
+            "✗ false"
         }
     );
+    println!("  active model     ... {}", ai_cfg.model_name);
     println!("  provider         ... {provider_name}");
-    println!("  embedding backend... {backend_name}");
-    println!("  model            ... {}", ai_cfg.model_name);
+    println!("  backend          ... {backend_name}");
+    println!("  dimensions       ... {dimensions}");
 
+    // Installed models.
+    let installed = mgr.list_installed();
+    print!("  installed models ... ");
+    if installed.is_empty() {
+        println!("none");
+    } else {
+        let names: Vec<String> = installed
+            .iter()
+            .map(|m| {
+                if m.name == ai_cfg.model_name {
+                    format!("{} (active)", m.name)
+                } else {
+                    m.name.clone()
+                }
+            })
+            .collect();
+        println!("{}", names.join(", "));
+    }
+
+    // Active model details.
     let model_installed = mgr.is_installed(&ai_cfg.model_name);
     print!("  model installed  ... ");
     if model_installed {
         let size_str = mgr
             .model_size(&ai_cfg.model_name)
             .map(format_bytes)
-            .unwrap_or_else(|| "\u{2014}".to_owned());
-        println!("\u{2713} ({})", size_str);
+            .unwrap_or_else(|| "—".to_owned());
+        println!("✓ ({})", size_str);
     } else {
-        println!("\u{2717}");
+        println!("✗");
     }
 
     print!("  model size       ... ");
     match mgr.get_model(&ai_cfg.model_name) {
         Ok(info) => println!("~{}", format_bytes(info.size_bytes)),
-        Err(_) => println!("\u{2014}"),
+        Err(_) => println!("—"),
     }
 
     print!("  vector db        ... ");
@@ -1312,9 +1411,9 @@ fn ai_status() -> Result<()> {
     }
     if store.is_initialized() {
         let count = store.count().unwrap_or(0);
-        println!("\u{2713} initialized ({count} vectors)");
+        println!("✓ initialized ({count} vectors)");
     } else {
-        println!("\u{2717} not initialized");
+        println!("✗ not initialized");
     }
 
     print!("  vector count     ... ");
@@ -1337,7 +1436,7 @@ fn ai_status() -> Result<()> {
                 );
             }
             Err(_) => {
-                println!("  index progress   ... \u{2014}");
+                println!("  index progress   ... —");
             }
         }
     }
@@ -1413,14 +1512,14 @@ fn ai_models() -> Result<()> {
     let models = mgr.list_available();
 
     println!("ggnmem ai models");
-    println!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
+    println!("─────────────────────────────────");
     println!();
 
     for model in &models {
         let status = if model.installed {
-            "\u{2713} installed"
+            "✓ installed"
         } else if !model.downloadable {
-            "  coming soon"
+            "  unavailable"
         } else {
             "  available"
         };
@@ -1429,10 +1528,15 @@ fn ai_models() -> Result<()> {
         } else {
             ""
         };
-        println!("  {} {}{}", status, model.name, active);
+        let recommended = if model.name == "all-MiniLM-L6-v2" {
+            " (Recommended)"
+        } else {
+            ""
+        };
+        println!("  {} {}{}{}", status, model.name, active, recommended);
         println!("    {}", model.description);
         if !model.downloadable {
-            println!("    \u{26a0} not yet available for download in this release");
+            println!("    ⚠ not available for download");
         }
         println!(
             "    dimensions: {}  size: ~{}",
@@ -1488,15 +1592,15 @@ fn ai_install(args: &[String]) -> Result<()> {
 /// Returns the canonical model name.
 fn select_model_interactive() -> Result<String> {
     println!("ggnmem ai install");
-    println!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
+    println!("─────────────────────────────────");
     println!();
     println!("  Select a model to install:");
     println!();
     println!("  1. MiniLM (Recommended, ~80 MB)");
     println!("     all-MiniLM-L6-v2 — fast, accurate, 384 dimensions");
     println!();
-    println!("  2. BGE Small (Coming Soon, ~130 MB)");
-    println!("     bge-small-en-v1.5 — not yet available in this release");
+    println!("  2. BGE Small (~130 MB)");
+    println!("     bge-small-en-v1.5 — high quality, 384 dimensions");
     println!();
     eprint!("  Select model [1]: ");
 
@@ -1506,9 +1610,7 @@ fn select_model_interactive() -> Result<String> {
 
     match choice {
         "" | "1" => Ok("all-MiniLM-L6-v2".to_owned()),
-        "2" => {
-            bail!("BGE Small is not yet available for download in this release.\nUse MiniLM (option 1) or wait for a future release.");
-        }
+        "2" => Ok("bge-small-en-v1.5".to_owned()),
         other => bail!("invalid selection: {other}. Choose 1 or 2."),
     }
 }
@@ -1800,8 +1902,8 @@ fn ai_setup() -> Result<()> {
     println!("  1. MiniLM (Recommended, ~80 MB)");
     println!("     all-MiniLM-L6-v2 — fast, accurate, 384 dimensions");
     println!();
-    println!("  2. BGE Small (Coming Soon, ~130 MB)");
-    println!("     bge-small-en-v1.5 — not yet available in this release");
+    println!("  2. BGE Small (~130 MB)");
+    println!("     bge-small-en-v1.5 — high quality, 384 dimensions");
     println!();
     eprint!("  Select model [1]: ");
 
@@ -1810,13 +1912,8 @@ fn ai_setup() -> Result<()> {
     let choice = input.trim();
 
     let model_name = match choice {
-        "" | "1" => "all-MiniLM-L6-v2",
-        "2" => {
-            println!();
-            println!("  ✗ BGE Small is not yet available for download in this release.");
-            println!("    Selecting MiniLM instead.");
-            "all-MiniLM-L6-v2"
-        }
+        "" | "1" => "all-MiniLM-L6-v2".to_owned(),
+        "2" => "bge-small-en-v1.5".to_owned(),
         other => bail!("invalid selection: {other}. Choose 1 or 2."),
     };
 
@@ -1839,11 +1936,11 @@ fn ai_setup() -> Result<()> {
     println!();
     println!("  Step 2/5: Download");
 
-    if mgr.is_installed(model_name) && mgr.has_real_model_files(model_name) {
+    if mgr.is_installed(&model_name) && mgr.has_real_model_files(&model_name) {
         println!("  ✓ Model already installed");
     } else {
         do_model_install(
-            model_name,
+            &model_name,
             &ai_cfg.models_dir,
             &ai_cfg.vector_db_path,
             false, // We'll handle reindex ourselves in step 4
@@ -1854,12 +1951,12 @@ fn ai_setup() -> Result<()> {
     println!();
     println!("  Step 3/5: Verify");
 
-    match mgr.verify_integrity(model_name) {
+    match mgr.verify_integrity(&model_name) {
         Ok(()) => println!("  ✓ SHA256 integrity verified"),
         Err(e) => eprintln!("  ⚠ integrity warning: {e}"),
     }
 
-    verify_model_loads(&ai_cfg.models_dir, model_name);
+    verify_model_loads(&ai_cfg.models_dir, &model_name);
 
     // ── Step 4: Reindex ──
     println!();
@@ -1867,7 +1964,7 @@ fn ai_setup() -> Result<()> {
 
     let db_path = default_db_path();
     if db_path.exists() {
-        let (provider, provider_name) = ggnmem_ai::create_provider(&ai_cfg.models_dir, model_name);
+        let (provider, provider_name) = ggnmem_ai::create_provider(&ai_cfg.models_dir, &model_name);
         let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path.clone());
         let _ = store.ensure_initialized();
         let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store);
@@ -1899,7 +1996,7 @@ fn ai_setup() -> Result<()> {
     println!("  Step 5/5: Test semantic search");
 
     if db_path.exists() {
-        let (provider, _) = ggnmem_ai::create_provider(&ai_cfg.models_dir, model_name);
+        let (provider, _) = ggnmem_ai::create_provider(&ai_cfg.models_dir, &model_name);
         let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path.clone());
         let pipeline = ggnmem_ai::EmbeddingPipeline::new(provider, store);
 
@@ -2222,6 +2319,448 @@ struct SemanticDisplayResult {
     duration_ms: Option<i64>,
     completed_at_ms: i64,
     similarity: f64,
+}
+
+// ─── Knowledge Base commands (Phase 18) ──────────────────────────────────────
+
+/// `ggnmem ask "<query>"` — Ask the knowledge base for a command suggestion.
+fn cmd_ask(args: &[String]) -> Result<()> {
+    let query = args
+        .iter()
+        .skip(2)
+        .cloned()
+        .collect::<Vec<String>>()
+        .join(" ");
+
+    if query.is_empty() {
+        println!("usage: ggnmem ask \"<natural language query>\"\n\nexamples:\n  ggnmem ask \"show running containers\"\n  ggnmem ask \"check git changes\"\n  ggnmem ask \"build rust project\"");
+        return Ok(());
+    }
+
+    let kb = ggnmem_knowledge::KnowledgeBase::new();
+    let results = kb.ask(&query, 5);
+
+    if results.is_empty() {
+        println!("no suggestions found for: {query}");
+        println!();
+        println!("  available topics: docker, git, linux, cargo, go, kubernetes");
+        println!("  you can add custom knowledge packs under: ~/.config/ggnmem/knowledge/");
+        return Ok(());
+    }
+
+    println!("ggnmem ask");
+    println!("─────────────────────────────────");
+    println!("  query: {query}");
+    println!();
+
+    for (i, result) in results.iter().enumerate() {
+        let conf = ggnmem_knowledge::format_confidence(result.confidence);
+        if i == 0 {
+            // Primary suggestion — highlighted.
+            println!("  ┌─────────────────────────────────────────────┐");
+            println!("  │  Suggested:   $ {}", result.command);
+            println!("  │  Description: {}", result.description);
+            println!("  │  Category:    {} / {}", result.topic, result.category);
+            println!("  │  Confidence:  {conf}");
+            println!("  │  Source:      {}", result.source);
+            println!("  └─────────────────────────────────────────────┘");
+        } else {
+            println!();
+            println!("  {}.  $ {}", i + 1, result.command);
+            println!("      {}", result.description);
+            println!("      Confidence: {conf}");
+        }
+    }
+
+    println!();
+    Ok(())
+}
+
+/// `ggnmem explain "<command>"` — Explain what a command does.
+fn cmd_explain(args: &[String]) -> Result<()> {
+    let command = args
+        .iter()
+        .skip(2)
+        .cloned()
+        .collect::<Vec<String>>()
+        .join(" ");
+
+    if command.is_empty() {
+        println!("usage: ggnmem explain \"<command>\"\n\nexamples:\n  ggnmem explain \"docker ps\"\n  ggnmem explain \"git status\"\n  ggnmem explain \"cargo build\"");
+        return Ok(());
+    }
+
+    let kb = ggnmem_knowledge::KnowledgeBase::new();
+    let result = kb.explain(&command);
+
+    match result {
+        Some(info) => {
+            println!("ggnmem explain");
+            println!("─────────────────────────────────");
+            println!("  command:  {}", info.command);
+            println!("  purpose:  {}", info.purpose);
+            println!("  category: {} / {}", info.topic, info.category);
+
+            if !info.flags.is_empty() {
+                println!();
+                println!("  common flags:");
+                for flag in &info.flags {
+                    println!("    {:<20} {}", flag.flag, flag.description);
+                }
+            }
+
+            if !info.examples.is_empty() {
+                println!();
+                println!("  examples:");
+                for example in &info.examples {
+                    println!("    $ {example}");
+                }
+            }
+
+            println!();
+        }
+        None => {
+            println!("no explanation found for: {command}");
+            println!();
+            println!("  try searching with: ggnmem ask \"{command}\"");
+
+            // Offer fuzzy matches.
+            let results = kb.ask(&command, 3);
+            if !results.is_empty() {
+                println!();
+                println!("  did you mean:");
+                for r in &results {
+                    println!("    ggnmem explain \"{}\"", r.command);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// `ggnmem learn <topic>` — Learn commands for a topic.
+fn cmd_learn(args: &[String]) -> Result<()> {
+    let topic = args.get(2).map(String::as_str);
+
+    let kb = ggnmem_knowledge::KnowledgeBase::new();
+
+    match topic {
+        Some(t) => {
+            let result = kb.learn(t);
+            match result {
+                Some(info) => {
+                    println!("ggnmem learn: {}", info.topic);
+                    println!("─────────────────────────────────");
+                    println!("  {}", info.description);
+                    println!();
+
+                    for cat in &info.categories {
+                        println!("  ── {} ──", cat.name);
+                        println!();
+                        for cmd in &cat.commands {
+                            let level = match cmd.difficulty {
+                                1 => "●  ",
+                                2 => "●● ",
+                                3 => "●●●",
+                                _ => "●  ",
+                            };
+                            println!("    {level}  {:<30} {}", cmd.command, cmd.description);
+                        }
+                        println!();
+                    }
+
+                    println!("  legend: ● beginner  ●● intermediate  ●●● advanced");
+                    println!();
+                }
+                None => {
+                    println!("unknown topic: {t}");
+                    println!();
+                    print_available_topics(&kb);
+                }
+            }
+        }
+        None => {
+            println!("ggnmem learn");
+            println!("─────────────────────────────────");
+            println!();
+            print_available_topics(&kb);
+            println!();
+            println!("  usage: ggnmem learn <topic>");
+        }
+    }
+
+    Ok(())
+}
+
+/// Print available knowledge topics.
+fn print_available_topics(kb: &ggnmem_knowledge::KnowledgeBase) {
+    println!("  available topics:");
+    println!();
+    for (name, desc) in kb.topics() {
+        println!("    {name:<15} {desc}");
+    }
+    println!();
+    println!("  total entries: {}", kb.entry_count());
+    println!("  custom packs:  ~/.config/ggnmem/knowledge/*.json or *.toml");
+}
+
+/// `ggnmem knowledge <list|validate>` — Manage knowledge packs.
+fn cmd_knowledge(args: &[String]) -> Result<()> {
+    match args.get(2).map(String::as_str) {
+        Some("list") => {
+            let kb = ggnmem_knowledge::KnowledgeBase::new();
+            println!("ggnmem knowledge list");
+            println!("─────────────────────────────────");
+            println!();
+
+            // Show all pack sources with details.
+            let sources = kb.pack_sources();
+            let builtin: Vec<_> = sources.iter().filter(|s| s.source == "builtin").collect();
+            let custom: Vec<_> = sources.iter().filter(|s| s.source != "builtin").collect();
+
+            println!("  built-in packs ({}):", builtin.len());
+            for ps in &builtin {
+                println!("    {:<15} {} entries", ps.name, ps.entry_count);
+            }
+            println!();
+
+            if custom.is_empty() {
+                println!("  custom packs:  (none)");
+            } else {
+                println!("  custom packs ({}):", custom.len());
+                for ps in &custom {
+                    println!("    {:<15} {} entries  ← {}", ps.name, ps.entry_count, ps.source);
+                }
+            }
+            println!();
+
+            // Show user dir.
+            match ggnmem_knowledge::KnowledgeBase::user_dir() {
+                Some(dir) => {
+                    println!("  user dir: {}", dir.display());
+                    if !dir.exists() {
+                        println!("  (directory does not exist — create it to add custom packs)");
+                    }
+                }
+                None => println!("  user dir: (could not determine)"),
+            }
+            println!();
+            println!("  total entries: {}", kb.entry_count());
+
+            // Show errors if any.
+            let errors = kb.load_errors();
+            if !errors.is_empty() {
+                println!();
+                println!("  ⚠ {} error(s) loading packs:", errors.len());
+                for err in errors {
+                    println!("    • {err}");
+                }
+            }
+
+            Ok(())
+        }
+        Some("validate") => {
+            let kb = ggnmem_knowledge::KnowledgeBase::new();
+            println!("ggnmem knowledge validate");
+            println!("─────────────────────────────────");
+
+            let sources = kb.pack_sources();
+            let errors = kb.load_errors();
+
+            println!("  {} packs loaded successfully.", sources.len());
+            println!("  {} entries indexed.", kb.entry_count());
+
+            // Per-pack validation.
+            for ps in sources {
+                println!("    ✓ {:<15} {} entries  ({})", ps.name, ps.entry_count, ps.source);
+            }
+
+            if errors.is_empty() {
+                println!();
+                println!("  status: OK");
+            } else {
+                println!();
+                println!("  ⚠ {} error(s):", errors.len());
+                for err in errors {
+                    println!("    ✗ {err}");
+                }
+                println!();
+                println!("  status: PARTIAL (some packs failed to load)");
+                println!();
+                println!("  Custom pack format (JSON):");
+                println!("    Option 1 — full format:");
+                println!("      {{\"topic\": \"name\", \"description\": \"...\", \"entries\": [...]}}");
+                println!("    Option 2 — simple array:");
+                println!("      [{{\"command\": \"cmd\", \"description\": \"...\"}}, ...]");
+            }
+
+            Ok(())
+        }
+        Some(sub) => {
+            println!("unknown knowledge subcommand: {sub}\n\nusage:\n  ggnmem knowledge list\n  ggnmem knowledge validate");
+            Ok(())
+        }
+        None => {
+            println!("usage:\n  ggnmem knowledge list\n  ggnmem knowledge validate");
+            Ok(())
+        }
+    }
+}
+
+// ─── AI use / benchmark (Phase 18) ──────────────────────────────────────────
+
+/// `ggnmem ai use <model>` — Switch the active embedding model.
+fn ai_use(args: &[String]) -> Result<()> {
+    let model_name = match args.get(3) {
+        Some(name) => name,
+        None => {
+            println!("usage: ggnmem ai use <model>\n\nexample:\n  ggnmem ai use all-MiniLM-L6-v2");
+            return Ok(());
+        }
+    };
+
+    let canonical = ggnmem_ai::resolve_alias(model_name);
+
+    // Validate model exists in registry.
+    let cfg = config::load()?;
+    let ai_cfg = build_ai_config(&cfg);
+    let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir.clone());
+
+    let model_info = mgr.get_model(&canonical);
+    if model_info.is_err() {
+        bail!("unknown model: {model_name}\n\navailable models:\n  all-MiniLM-L6-v2\n  bge-small-en-v1.5");
+    }
+
+    if !mgr.is_installed(&canonical) {
+        bail!(
+            "model '{canonical}' is not installed.\nInstall with: ggnmem ai install {canonical}"
+        );
+    }
+
+    // Check if already active.
+    if cfg.ai.model_name == canonical {
+        println!("  model '{canonical}' is already active.");
+        return Ok(());
+    }
+
+    let old_model = cfg.ai.model_name.clone();
+
+    // Update config.
+    let mut new_cfg = cfg;
+    new_cfg.ai.model_name = canonical.clone();
+    config::save(&new_cfg)?;
+
+    println!("ggnmem ai use");
+    println!("─────────────────────────────────");
+    println!("  switched: {old_model} → {canonical}");
+    println!("  saved to {}", config::config_path()?.display());
+
+    // Warn about vector incompatibility.
+    let store = ggnmem_ai::VectorStore::new(ai_cfg.vector_db_path.clone());
+    if store.is_initialized() {
+        let count = store.count().unwrap_or(0);
+        if count > 0 {
+            println!();
+            println!("  ⚠ Warning: {count} existing embeddings were built with '{old_model}'.");
+            println!("    Embeddings from different models are NOT compatible.");
+            println!("    Run `ggnmem ai reindex` to rebuild embeddings with '{canonical}'.");
+        }
+    }
+
+    Ok(())
+}
+
+/// `ggnmem ai benchmark` — Compare installed models.
+fn ai_benchmark() -> Result<()> {
+    let cfg = config::load()?;
+    let ai_cfg = build_ai_config(&cfg);
+    let mgr = ggnmem_ai::ModelManager::new(ai_cfg.models_dir.clone());
+    let installed = mgr.list_installed();
+
+    if installed.is_empty() {
+        println!("ggnmem ai benchmark");
+        println!("─────────────────────────────────");
+        println!("  no models installed. Install with: ggnmem ai install");
+        return Ok(());
+    }
+
+    println!("ggnmem ai benchmark");
+    println!("─────────────────────────────────");
+    println!();
+
+    let test_phrases = [
+        "docker compose up",
+        "git push origin main",
+        "cargo test --workspace",
+        "kubectl get pods",
+        "find . -name '*.rs'",
+        "check running containers",
+        "build rust project",
+        "show git changes",
+        "list kubernetes services",
+        "compress directory",
+    ];
+
+    println!(
+        "  {:<25} {:>10} {:>12} {:>10} {:>8}",
+        "Model", "Load (ms)", "Embed (ms)", "Memory", "Dims"
+    );
+    println!("  {}", "─".repeat(70));
+
+    for model in &installed {
+        // Measure model load time.
+        let load_start = std::time::Instant::now();
+        let (provider, provider_name) =
+            ggnmem_ai::create_provider(&ai_cfg.models_dir, &model.name);
+        let load_ms = load_start.elapsed().as_millis();
+
+        // Skip N-gram fallback models (no real model files).
+        if provider_name.contains("fallback") || provider_name.contains("N-gram") {
+            println!(
+                "  {:<25} {:>10} {:>12} {:>10} {:>8}",
+                model.name, "—", "—", "—", "—"
+            );
+            println!("    (N-gram fallback — no ONNX model loaded)");
+            continue;
+        }
+
+        // Measure embedding latency (average of test phrases).
+        let mut total_embed_us: u128 = 0;
+        let mut dims = 0;
+        for phrase in &test_phrases {
+            let embed_start = std::time::Instant::now();
+            if let Ok(embedding) = provider.embed_query(phrase) {
+                total_embed_us += embed_start.elapsed().as_micros();
+                dims = embedding.len();
+            }
+        }
+        let avg_embed_ms = total_embed_us as f64 / test_phrases.len() as f64 / 1000.0;
+
+        // Memory: use on-disk model size as a proxy.
+        let mem_str = format_bytes(model.disk_size_bytes);
+
+        let active = if model.name == cfg.ai.model_name {
+            " (active)"
+        } else {
+            ""
+        };
+
+        println!(
+            "  {:<25} {:>10} {:>10.2}ms {:>10} {:>8}",
+            format!("{}{active}", model.name),
+            load_ms,
+            avg_embed_ms,
+            mem_str,
+            dims
+        );
+    }
+
+    println!();
+    println!("  test phrases: {}", test_phrases.len());
+    println!("  benchmark completed.");
+
+    Ok(())
 }
 
 /// Get the default database path (`~/.local/share/ggnmem/ggnmem.db`).
