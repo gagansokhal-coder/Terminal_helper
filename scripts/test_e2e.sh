@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -e
 
-source /home/gagan/.cargo/env
-cd /mnt/c/Users/user/Desktop/ggnmem
+# Resolve project root relative to this script.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+
+# Source cargo env if available.
+[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
 
 # Use temp directories so we don't pollute real XDG dirs.
 TEST_DIR=$(mktemp -d)
