@@ -1,0 +1,218 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# ggnmem — Automated Release Pipeline
+#
+# Trigger:
+#   Push a tag matching  vX.Y.Z  or  vX.Y.Z-<pre>  (e.g. v0.3.1-alpha)
+#
+#   git tag -a v0.4.0-alpha -m "v0.4.0-alpha"
+#   git push origin v0.4.0-alpha
+#
+# Pipeline stages:
+#   1. gate    — run full CI checks (fmt, clippy, tests)
+#   2. build   — cross-compile release binaries for x86_64 and aarch64
+#   3. release — create GitHub Release with assets and auto-generated notes
+#
+# Generated release assets:
+#   • ggnmem-linux-x86_64.tar.gz
+#   • ggnmem-linux-aarch64.tar.gz
+#   • checksums.txt
+#   • RELEASE_NOTES.md
+#
+# Prerelease detection:
+#   Tags like v1.0.0-alpha, v1.0.0-beta.2, v1.0.0-rc.1 are marked as
+#   prerelease on GitHub automatically.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+# ═════════════════════════════════════════════════════════════════════════════════
+jobs:
+  # ─── Stage 1: Quality gate ─────────────────────────────────────────────────
+  gate:
+    name: Quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: gate-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: gate-${{ runner.os }}-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace
+
+  # ─── Stage 2: Build release binaries ───────────────────────────────────────
+  build:
+    name: Build (${{ matrix.target }})
+    needs: gate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: x86_64
+          - target: aarch64-unknown-linux-gnu
+            arch: aarch64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (aarch64)
+        if: matrix.arch == 'aarch64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Configure linker (aarch64)
+        if: matrix.arch == 'aarch64'
+        run: |
+          mkdir -p .cargo
+          printf '[target.aarch64-unknown-linux-gnu]\nlinker = "aarch64-linux-gnu-gcc"\n' >> .cargo/config.toml
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: build-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: build-${{ matrix.arch }}-
+
+      - name: Build release binaries
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Extract version from tag
+        id: meta
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG"           >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"   >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "date=$(date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          echo "rustc=$(rustc --version | sed 's/rustc \([^ ]*\).*/\1/')" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble release directory
+        run: |
+          bash scripts/assemble_release.sh \
+            --target "${{ matrix.target }}" \
+            --arch   "${{ matrix.arch }}" \
+            --version "${{ steps.meta.outputs.version }}" \
+            --commit  "${{ steps.meta.outputs.commit }}" \
+            --date    "${{ steps.meta.outputs.date }}" \
+            --rustc   "${{ steps.meta.outputs.rustc }}"
+
+      - name: Upload release tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.arch }}
+          path: |
+            ggnmem-linux-${{ matrix.arch }}.tar.gz
+          retention-days: 1
+
+  # ─── Stage 3: Create GitHub Release ────────────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release assets
+        id: assets
+        run: |
+          mkdir -p dist
+          cp artifacts/release-x86_64/ggnmem-linux-x86_64.tar.gz   dist/
+          cp artifacts/release-aarch64/ggnmem-linux-aarch64.tar.gz  dist/
+
+          cd dist
+          sha256sum *.tar.gz > checksums.txt
+          cd ..
+
+          echo "dir=dist" >> "$GITHUB_OUTPUT"
+
+      - name: Detect prerelease
+        id: pre
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          bash scripts/generate_release_notes.sh \
+            --version "$VERSION" \
+            --tag     "$TAG" \
+            --dist    "${{ steps.assets.outputs.dir }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ggnmem ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          prerelease: ${{ steps.pre.outputs.prerelease }}
+          files: |
+            ${{ steps.assets.outputs.dir }}/ggnmem-linux-x86_64.tar.gz
+            ${{ steps.assets.outputs.dir }}/ggnmem-linux-aarch64.tar.gz
+            ${{ steps.assets.outputs.dir }}/checksums.txt
+          fail_on_unmatched_files: true
