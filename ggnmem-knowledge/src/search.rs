@@ -219,7 +219,6 @@ fn trigrams(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entries::FlagEntry;
 
     fn make_entry(command: &str, description: &str, aliases: &[&str]) -> KnowledgeEntry {
         KnowledgeEntry {
