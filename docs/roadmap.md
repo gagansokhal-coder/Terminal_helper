@@ -231,6 +231,37 @@ Milestone:
 
 - A cautious Linux pre-alpha can be used by early adopters who understand the project is still evolving.
 
+### Phase 18 — Knowledge Base (Completed)
+
+Goal: provide built-in command documentation and learning.
+
+Deliverables:
+
+- `ggnmem-knowledge` crate for offline command packs.
+- `ggnmem ask` to query commands naturally.
+- `ggnmem explain` to break down command flags.
+- `ggnmem learn` for topic-based learning.
+
+Milestone:
+
+- Users can query and learn commands locally without network calls.
+
+### Phase 19 — Release Automation (Completed)
+
+Goal: automate the release pipeline using GitHub Actions.
+
+Deliverables:
+
+- Multi-job CI pipeline (`ci.yml`).
+- Release pipeline (`release.yml`) triggered by tags.
+- Cross-compilation for `x86_64` and `aarch64`.
+- Version verification across Cargo.toml, tag, and binary.
+- Auto-generated release notes and checksums.
+
+Milestone:
+
+- Releases are fully automated and verified.
+
 ## Linux-First Rollout
 
 Linux is the first supported platform because it exercises the core architecture with less platform-specific risk than Windows.
