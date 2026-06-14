@@ -8,9 +8,15 @@
 #   git push origin v0.4.0-alpha
 #
 # Pipeline stages:
-#   1. gate    — run full CI checks (fmt, clippy, tests)
+#   1. gate    — version verification + full CI checks (fmt, clippy, tests)
 #   2. build   — cross-compile release binaries for x86_64 and aarch64
-#   3. release — create GitHub Release with assets and auto-generated notes
+#   3. verify  — extract tarball and verify binary version matches tag
+#   4. release — create GitHub Release with assets and auto-generated notes
+#
+# Version safety:
+#   The pipeline will FAIL if:
+#   - Tag version (v0.3.2-alpha) != Cargo.toml version (0.3.2-alpha)
+#   - Binary `ggnmem version` output != tag version
 #
 # Generated release assets:
 #   • ggnmem-linux-x86_64.tar.gz
@@ -65,6 +71,24 @@ jobs:
             target
           key: gate-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: gate-${{ runner.os }}-
+
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          TAG_VERSION="${TAG#v}"
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+
+          echo "Tag version:       $TAG_VERSION"
+          echo "Cargo.toml version: $CARGO_VERSION"
+
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo ""
+            echo "::error::Version mismatch! Tag $TAG has version '$TAG_VERSION' but Cargo.toml has '$CARGO_VERSION'"
+            echo "::error::Update Cargo.toml version to '$TAG_VERSION' before tagging, or delete the tag and re-tag after fixing."
+            exit 1
+          fi
+
+          echo "✓ Versions match: $TAG_VERSION"
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -154,10 +178,75 @@ jobs:
             ggnmem-linux-${{ matrix.arch }}.tar.gz
           retention-days: 1
 
+  # ─── Stage 2.5: Verify built binary version ────────────────────────────────
+  verify:
+    name: Verify binary version
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download x86_64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-x86_64
+          path: artifacts
+
+      - name: Extract and verify binary version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          TAG_VERSION="${TAG#v}"
+
+          echo "Expected version: $TAG_VERSION"
+          echo ""
+
+          # Extract tarball
+          mkdir -p verify
+          tar xzf artifacts/ggnmem-linux-x86_64.tar.gz -C verify
+
+          # Check binary exists and is executable
+          if [ ! -f verify/ggnmem ]; then
+            echo "::error::ggnmem binary not found in tarball"
+            exit 1
+          fi
+          chmod +x verify/ggnmem
+
+          # Get binary version output
+          BINARY_VERSION=$(verify/ggnmem version 2>&1 | head -1 | sed 's/ggnmem //')
+          echo "Binary version:   $BINARY_VERSION"
+
+          if [ "$BINARY_VERSION" != "$TAG_VERSION" ]; then
+            echo ""
+            echo "::error::Binary version mismatch! Tag expects '$TAG_VERSION' but binary reports '$BINARY_VERSION'"
+            echo "::error::Ensure Cargo.toml version is updated and committed before tagging."
+            exit 1
+          fi
+
+          echo "✓ Binary version matches tag: $BINARY_VERSION"
+
+          # Also verify VERSION file inside tarball
+          if [ -f verify/VERSION ]; then
+            FILE_VERSION=$(grep '^version=' verify/VERSION | cut -d= -f2)
+            echo "VERSION file:     $FILE_VERSION"
+
+            if [ "$FILE_VERSION" != "$TAG_VERSION" ]; then
+              echo "::error::VERSION file mismatch! Expected '$TAG_VERSION' but got '$FILE_VERSION'"
+              exit 1
+            fi
+
+            echo "✓ VERSION file matches tag: $FILE_VERSION"
+          fi
+
+          echo ""
+          echo "═══════════════════════════════════════"
+          echo "  All version checks passed"
+          echo "  Tag:     $TAG"
+          echo "  Binary:  $BINARY_VERSION"
+          echo "  Release: $TAG_VERSION"
+          echo "═══════════════════════════════════════"
+
   # ─── Stage 3: Create GitHub Release ────────────────────────────────────────
   release:
     name: Publish GitHub Release
-    needs: build
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
