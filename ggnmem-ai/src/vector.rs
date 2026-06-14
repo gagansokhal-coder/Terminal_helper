@@ -549,7 +549,7 @@ mod tests {
 
     #[test]
     fn floats_to_bytes_round_trip() {
-        let values = vec![1.0_f32, -2.5, 3.14, 0.0];
+        let values = vec![1.0_f32, -2.5, 3.75, 0.0];
         let bytes = floats_to_bytes(&values);
         assert_eq!(bytes.len(), values.len() * 4);
 
