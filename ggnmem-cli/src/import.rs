@@ -87,10 +87,7 @@ pub fn cmd_import(args: &[String]) -> Result<()> {
             println!("    {cmd}");
         }
         println!();
-        println!(
-            "  Total importable: {} commands",
-            filtered.len()
-        );
+        println!("  Total importable: {} commands", filtered.len());
         println!("  Run without --preview to import.");
         return Ok(());
     }
@@ -120,10 +117,7 @@ pub fn cmd_import(args: &[String]) -> Result<()> {
             println!("  [dry-run] Would import:  {would_import:>8} commands");
             println!("  [dry-run] Would skip:    {would_skip:>8} (duplicates)");
         } else {
-            println!(
-                "  [dry-run] Would import:  {:>8} commands",
-                filtered.len()
-            );
+            println!("  [dry-run] Would import:  {:>8} commands", filtered.len());
             println!("  [dry-run] Would skip:    {:>8} (no database yet)", 0);
         }
         println!();
@@ -150,11 +144,7 @@ pub fn cmd_import(args: &[String]) -> Result<()> {
 
     // Create an import session.
     let now_ms = now_epoch_ms();
-    let session_id = SessionId::from_storage(format!(
-        "import-{}-{}",
-        shell.name(),
-        now_ms
-    ));
+    let session_id = SessionId::from_storage(format!("import-{}-{}", shell.name(), now_ms));
 
     let session = ggnmem_db::NewSession {
         id: session_id.clone(),
@@ -615,7 +605,10 @@ mod tests {
 
         let path = tmp.path().to_path_buf();
         let cmds = parse_bash_history(&path).unwrap();
-        assert_eq!(cmds, vec!["git status", "docker ps", "cargo build --release"]);
+        assert_eq!(
+            cmds,
+            vec!["git status", "docker ps", "cargo build --release"]
+        );
     }
 
     #[test]
@@ -683,8 +676,14 @@ mod tests {
 
     #[test]
     fn strip_zsh_prefix() {
-        assert_eq!(strip_zsh_extended_prefix(": 123:0;git status"), "git status");
+        assert_eq!(
+            strip_zsh_extended_prefix(": 123:0;git status"),
+            "git status"
+        );
         assert_eq!(strip_zsh_extended_prefix("plain command"), "plain command");
-        assert_eq!(strip_zsh_extended_prefix(": no-semicolon"), ": no-semicolon");
+        assert_eq!(
+            strip_zsh_extended_prefix(": no-semicolon"),
+            ": no-semicolon"
+        );
     }
 }
