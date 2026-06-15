@@ -600,7 +600,7 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         writeln!(tmp.as_file(), "git status").unwrap();
         writeln!(tmp.as_file(), "docker ps").unwrap();
-        writeln!(tmp.as_file(), "").unwrap();
+        writeln!(tmp.as_file()).unwrap();
         writeln!(tmp.as_file(), "cargo build --release").unwrap();
 
         let path = tmp.path().to_path_buf();
