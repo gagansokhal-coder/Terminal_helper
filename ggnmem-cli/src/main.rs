@@ -1,6 +1,7 @@
 mod config;
 mod export;
 mod hooks;
+mod import;
 mod profile;
 mod service;
 mod setup;
@@ -55,6 +56,7 @@ async fn main() -> Result<()> {
         Some("explain") => cmd_explain(&args),
         Some("learn") => cmd_learn(&args),
         Some("knowledge") => cmd_knowledge(&args),
+        Some("import") => import::cmd_import(&args),
         Some(command) => bail!("unknown command: {command}"),
         None => {
             print_usage();
@@ -119,6 +121,14 @@ fn print_usage() {
     println!("  ai doctor        Run AI diagnostics");
     println!("  ai verify-model  Verify model loads and produces embeddings");
     println!("  ai reindex       Rebuild all embeddings");
+    println!();
+    println!("history import:");
+    println!("  import auto      Auto-detect shell and import history");
+    println!("  import bash      Import from ~/.bash_history");
+    println!("  import zsh       Import from ~/.zsh_history");
+    println!("  import fish      Import from ~/.local/share/fish/fish_history");
+    println!("  --dry-run        Show counts without modifying the database");
+    println!("  --preview        Show a sample of commands before importing");
     println!();
     println!("setup:");
     println!("  install          Set up shell integration and config");
@@ -883,6 +893,10 @@ async fn doctor() -> Result<()> {
     } else {
         println!("\u{2717} not available (start daemon to create database)");
     }
+
+    // ── History import status ──
+
+    import::doctor_history_status();
 
     // ── Ctrl+R integration status ──
 

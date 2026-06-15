@@ -533,7 +533,7 @@ dependencies = [
 
 [[package]]
 name = "ggnmem-ai"
-version = "0.3.1-alpha"
+version = "0.3.3-alpha"
 dependencies = [
  "ggnmem-db",
  "ort",
@@ -548,7 +548,7 @@ dependencies = [
 
 [[package]]
 name = "ggnmem-cli"
-version = "0.3.1-alpha"
+version = "0.3.3-alpha"
 dependencies = [
  "anyhow",
  "crossterm",
@@ -560,6 +560,7 @@ dependencies = [
  "ratatui",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "toml",
  "uuid",
@@ -567,7 +568,7 @@ dependencies = [
 
 [[package]]
 name = "ggnmem-daemon"
-version = "0.3.1-alpha"
+version = "0.3.3-alpha"
 dependencies = [
  "anyhow",
  "bincode",
@@ -584,7 +585,7 @@ dependencies = [
 
 [[package]]
 name = "ggnmem-db"
-version = "0.3.1-alpha"
+version = "0.3.3-alpha"
 dependencies = [
  "bincode",
  "rusqlite",
@@ -597,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "ggnmem-knowledge"
-version = "0.3.1-alpha"
+version = "0.3.3-alpha"
 dependencies = [
  "serde",
  "serde_json",
@@ -607,11 +608,11 @@ dependencies = [
 
 [[package]]
 name = "ggnmem-model"
-version = "0.3.1-alpha"
+version = "0.3.3-alpha"
 
 [[package]]
 name = "ggnmem-pty"
-version = "0.3.1-alpha"
+version = "0.3.3-alpha"
 
 [[package]]
 name = "hashbrown"
