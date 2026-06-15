@@ -262,6 +262,23 @@ Milestone:
 
 - Releases are fully automated and verified.
 
+### Phase 20 — Shell History Import (Completed)
+
+Goal: let new users import existing Bash, Zsh, and Fish shell history.
+
+Deliverables:
+
+- `ggnmem import auto` auto-detect and import.
+- `ggnmem import bash/zsh/fish` explicit import.
+- `--dry-run` and `--preview` safety modes.
+- Batch insert with deduplication for 100k+ entries.
+- Doctor integration reporting available history files.
+- Updated README, INSTALL.md, and roadmap documentation.
+
+Milestone:
+
+- Users can populate ggnmem with their existing shell history in seconds.
+
 ## Linux-First Rollout
 
 Linux is the first supported platform because it exercises the core architecture with less platform-specific risk than Windows.

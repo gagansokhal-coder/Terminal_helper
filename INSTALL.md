@@ -71,6 +71,33 @@ ggnmem version
 # Press Ctrl+R
 ```
 
+## Post-Install: Import History
+
+If you already have shell history, import it to start with a populated database:
+
+```bash
+# Auto-detect your shell and import history
+ggnmem import auto
+
+# Or specify explicitly
+ggnmem import bash
+ggnmem import zsh
+ggnmem import fish
+```
+
+Preview before importing:
+
+```bash
+ggnmem import bash --preview    # See a sample of commands
+ggnmem import bash --dry-run    # See counts without modifying DB
+```
+
+After importing, verify your commands are searchable:
+
+```bash
+ggnmem search docker
+```
+
 ## WSL-Specific Notes
 
 ggnmem works fully in WSL (Windows Subsystem for Linux). A few tips:

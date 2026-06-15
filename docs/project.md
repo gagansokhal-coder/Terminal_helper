@@ -97,6 +97,7 @@ When acting on this repository, execute tasks in the following sequence unless o
 8. **Phase 17: Distribution.** Create installers, upgrade scripts, and checksum verifications.
 9. **Phase 18: Knowledge Base.** Implement built-in command documentation, `ggnmem-knowledge` crate, and custom pack loading.
 10. **Phase 19: Release Automation.** Build the GitHub Actions CI/CD pipelines with version verification and automated tag-based releases.
+11. **Phase 20: History Import.** Implement Bash, Zsh, and Fish history parsing, batch database insertion, and deduplication logic.
 
 **END OF SYSTEM DIRECTIVES.** Proceed with generating the required workspace architecture.
 

@@ -68,6 +68,13 @@ $ ggnmem search "check git changes"
 - Built-in install, upgrade, uninstall, and health checks
 - Automated release pipeline with GitHub Actions
 
+### 📥 Shell History Import
+- Import existing Bash, Zsh, and Fish history instantly
+- Auto-detect your shell or specify explicitly
+- Deduplication — never imports the same command twice
+- Preview and dry-run modes for safety
+- Handles 100k+ history entries with streaming + batch writes
+
 ---
 
 ## Installation
@@ -127,7 +134,10 @@ ggnmem search "docker compose"
 # 5. Interactive search (Ctrl+R replacement)
 ggnmem ui
 
-# 6. View recent commands
+# 6. Import your existing shell history
+ggnmem import auto
+
+# 7. View recent commands
 ggnmem recent
 ```
 
@@ -148,6 +158,7 @@ ggnmem recent             # Show recent commands
 ggnmem stats              # Database statistics
 ggnmem doctor             # Full health check
 ggnmem version --verbose  # Detailed version info
+ggnmem import auto        # Import shell history
 ```
 
 ---
@@ -219,6 +230,53 @@ See [`.github/workflows/release.yml`](.github/workflows/release.yml) for the ful
 
 ---
 
+## History Import
+
+New to ggnmem? Import your existing shell history so you start with a populated database:
+
+```bash
+# Auto-detect your shell and import
+ggnmem import auto
+
+# Or specify explicitly
+ggnmem import bash
+ggnmem import zsh
+ggnmem import fish
+```
+
+### Options
+
+```bash
+# Preview what would be imported (first 20 commands)
+ggnmem import bash --preview
+
+# Dry run — show counts without modifying the database
+ggnmem import bash --dry-run
+
+# Import from a custom file path
+ggnmem import bash --file /path/to/custom_history
+```
+
+### Example Output
+
+```text
+  Source: /home/user/.bash_history
+  Shell:  bash
+
+  Parsing history...
+  Found:       12847 entries
+  Filtered:     1203 (shell noise, secrets)
+
+  Importing...
+  Imported:          9421 commands
+  Skipped (dupes):   2223
+  Failed:               0
+
+  Duration: 1.2s
+```
+
+---
+
 ## Architecture
 
 ```
@@ -269,6 +327,7 @@ See [`.github/workflows/release.yml`](.github/workflows/release.yml) for the ful
 | Install / upgrade / uninstall | ✅ Done |
 | Knowledge base (ask, explain, learn) | ✅ Done |
 | CI/CD + automated releases | ✅ Done |
+| Shell history import (Bash, Zsh, Fish) | ✅ Done |
 | Windows PowerShell support | 🔜 Planned |
 | Ghost-text autosuggestions | 🔜 Future |
 | Fish / Nushell integration | 🔜 Future |
