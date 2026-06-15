@@ -1234,6 +1234,96 @@ impl Database {
         )?;
         Ok(())
     }
+
+    // ─── Phase 20: Bulk import support ──────────────────────────────────────
+
+    /// Load all existing content hashes into a `HashSet` for fast deduplication
+    /// during bulk imports.
+    pub fn list_all_content_hashes(&self) -> DbResult<std::collections::HashSet<String>> {
+        let mut stmt = self
+            .connection
+            .prepare("SELECT content_hash FROM commands")?;
+        let hashes: std::collections::HashSet<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(hashes)
+    }
+
+    /// Insert a batch of commands in a single transaction.
+    ///
+    /// Returns the number of commands actually inserted (excludes duplicates
+    /// that hit the `ON CONFLICT` path). Commands whose `content_hash` is
+    /// already in `existing_hashes` are skipped entirely to avoid the SQL
+    /// round-trip.
+    pub fn insert_command_batch(
+        &self,
+        commands: &[NewCommand],
+        existing_hashes: &std::collections::HashSet<String>,
+    ) -> DbResult<u64> {
+        use crate::hash::{content_hash, normalize_command};
+
+        let tx = self.connection.unchecked_transaction()?;
+        let mut inserted = 0u64;
+
+        for cmd in commands {
+            let hash = content_hash(&cmd.command, &cmd.cwd);
+            if existing_hashes.contains(&hash) {
+                continue;
+            }
+
+            let normalized = normalize_command(&cmd.command);
+            tx.execute(
+                r#"
+                INSERT OR IGNORE INTO commands (
+                    id, session_id, command, normalized_command, cwd,
+                    exit_code, duration_ms, started_at_ms, completed_at_ms,
+                    content_hash, created_at_ms, updated_at_ms
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                "#,
+                rusqlite::params![
+                    cmd.id.as_str(),
+                    cmd.session_id.as_str(),
+                    cmd.command.as_str(),
+                    normalized,
+                    cmd.cwd.as_str(),
+                    cmd.exit_code,
+                    cmd.duration_ms,
+                    cmd.started_at_ms,
+                    cmd.completed_at_ms,
+                    hash,
+                    cmd.completed_at_ms,
+                    cmd.completed_at_ms,
+                ],
+            )?;
+
+            // Check if the row was actually inserted (not a conflict skip).
+            if tx.changes() > 0 {
+                // Insert metadata row.
+                let _ = tx.execute(
+                    r#"
+                    INSERT OR IGNORE INTO command_metadata (
+                        command_id, first_seen_at_ms, last_seen_at_ms,
+                        last_exit_code, last_duration_ms
+                    )
+                    VALUES (?1, ?2, ?3, ?4, ?5)
+                    "#,
+                    rusqlite::params![
+                        cmd.id.as_str(),
+                        cmd.completed_at_ms,
+                        cmd.completed_at_ms,
+                        cmd.exit_code,
+                        cmd.duration_ms,
+                    ],
+                );
+                inserted += 1;
+            }
+        }
+
+        tx.commit()?;
+        Ok(inserted)
+    }
 }
 
 /// Classify how well a query matches a command+cwd pair.
