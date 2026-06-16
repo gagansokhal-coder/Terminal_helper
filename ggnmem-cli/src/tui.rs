@@ -268,6 +268,20 @@ impl App {
             );
         }
     }
+
+    fn handle_paste(&mut self, text: &str) {
+        let text = text.trim_end_matches(&['\r', '\n'][..]);
+        // Multi-line paste: convert newlines and tabs to spaces, remove carriage returns.
+        let cleaned: String = text
+            .chars()
+            .map(|c| if c == '\n' || c == '\t' { ' ' } else { c })
+            .filter(|c| *c != '\r')
+            .collect();
+
+        self.query.insert_str(self.cursor_pos, &cleaned);
+        self.cursor_pos += cleaned.len();
+        self.mark_dirty();
+    }
 }
 
 // ─── Public entry point ──────────────────────────────────────────────────────
@@ -275,7 +289,8 @@ impl App {
 pub async fn run_tui() -> Result<()> {
     enable_raw_mode().context("enable raw mode")?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen).context("enter alternate screen")?;
+    execute!(stdout, EnterAlternateScreen, event::EnableBracketedPaste)
+        .context("enter alternate screen")?;
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).context("create terminal")?;
@@ -300,7 +315,11 @@ pub async fn run_tui() -> Result<()> {
 
     // Restore terminal.
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        event::DisableBracketedPaste
+    )?;
     terminal.show_cursor()?;
 
     // Post-exit actions. The shell widget owns readline insertion/execution.
@@ -329,10 +348,16 @@ async fn run_event_loop(
         };
 
         if event::poll(poll_timeout)? {
-            if let Event::Key(key) = event::read()? {
-                if handle_key(app, key) {
-                    break;
+            match event::read()? {
+                Event::Key(key) => {
+                    if handle_key(app, key) {
+                        break;
+                    }
                 }
+                Event::Paste(text) => {
+                    app.handle_paste(&text);
+                }
+                _ => {}
             }
         }
 
@@ -444,6 +469,18 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         // ── Tab: toggle preview ──
         KeyCode::Tab => {
             app.show_preview = !app.show_preview;
+        }
+
+        // ── Paste ──
+        KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(text) = paste_from_clipboard() {
+                app.handle_paste(&text);
+            }
+        }
+        KeyCode::Insert if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            if let Some(text) = paste_from_clipboard() {
+                app.handle_paste(&text);
+            }
         }
 
         // ── Navigation ──
@@ -1234,6 +1271,34 @@ fn copy_to_clipboard(text: &str) -> bool {
         }
     }
     false
+}
+
+/// Paste text from the OS clipboard.
+fn paste_from_clipboard() -> Option<String> {
+    use std::process::Command;
+
+    // Tool list ordered by preference.
+    let tools: &[(&str, &[&str])] = &[
+        (
+            "powershell.exe",
+            &["-NoProfile", "-Command", "Get-Clipboard"],
+        ),
+        ("xclip", &["-o", "-selection", "clipboard"]),
+        ("xsel", &["--clipboard", "--output"]),
+        ("wl-paste", &[]),
+        ("pbpaste", &[]),
+    ];
+
+    for (tool, args) in tools {
+        if let Ok(output) = Command::new(tool).args(*args).output() {
+            if output.status.success() {
+                if let Ok(text) = String::from_utf8(output.stdout) {
+                    return Some(text);
+                }
+            }
+        }
+    }
+    None
 }
 
 // ─── Formatting helpers ──────────────────────────────────────────────────────
