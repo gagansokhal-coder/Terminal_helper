@@ -912,6 +912,38 @@ async fn doctor() -> Result<()> {
         println!("\u{2717} needs shell hooks + TUI enabled");
     }
 
+    // ── TUI diagnostics ──
+
+    println!();
+    println!("TUI             ... \u{2713} available");
+
+    // Clipboard support detection.
+    print!("  clipboard     ... ");
+    let clipboard_tools: &[(&str, &[&str])] = &[
+        ("clip.exe", &[]),
+        ("xclip", &["-version"]),
+        ("xsel", &["--version"]),
+        ("wl-copy", &["--version"]),
+    ];
+    let mut clipboard_found = false;
+    for (tool, _args) in clipboard_tools {
+        if std::process::Command::new(tool)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .and_then(|mut c| c.wait())
+            .is_ok()
+        {
+            println!("\u{2713} {tool}");
+            clipboard_found = true;
+            break;
+        }
+    }
+    if !clipboard_found {
+        println!("\u{2717} no clipboard tool found (install xclip or xsel)");
+    }
+
     println!();
     println!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
     println!("all checks complete");

@@ -3,16 +3,17 @@
 //! Full-screen ratatui interface with:
 //! - Hybrid search input with live filtering (FTS + Semantic + RRF)
 //! - Natural language queries ("check git changes" → git status)
-//! - Search mode toggles: Ctrl+F (FTS), Ctrl+S (Semantic), Ctrl+H (Hybrid)
+//! - Ctrl+F cycles search modes: FTS → Semantic → Hybrid
 //! - Scrollable results list with match highlighting and source labels
 //! - Detail preview panel (always visible, toggled with Tab)
 //! - Enter inserts command into shell prompt
 //! - Shift+Enter executes command immediately through the shell hook
+//! - Ctrl+C copies selected command (quits if nothing selected)
 //! - Ctrl+L clears query, Esc exits
-//! - Shift+C copies to clipboard
+//! - PgUp/PgDn for page navigation, Ctrl+Home/End for first/last
 //! - Shift+I toggles internal command visibility
 //! - Shift+P pins a command, Shift+F shows favorites only
-//! - Status bar: [MODE] N results | Xms
+//! - Status bar: [MODE] N results | Xms | N in db
 
 use std::collections::HashSet;
 use std::io;
@@ -160,6 +161,36 @@ impl App {
         self.list_state.select(Some(i));
     }
 
+    fn select_page_down(&mut self, page_size: usize) {
+        if self.results.is_empty() {
+            return;
+        }
+        let current = self.list_state.selected().unwrap_or(0);
+        let target = (current + page_size).min(self.results.len() - 1);
+        self.list_state.select(Some(target));
+    }
+
+    fn select_page_up(&mut self, page_size: usize) {
+        if self.results.is_empty() {
+            return;
+        }
+        let current = self.list_state.selected().unwrap_or(0);
+        let target = current.saturating_sub(page_size);
+        self.list_state.select(Some(target));
+    }
+
+    fn select_first(&mut self) {
+        if !self.results.is_empty() {
+            self.list_state.select(Some(0));
+        }
+    }
+
+    fn select_last(&mut self) {
+        if !self.results.is_empty() {
+            self.list_state.select(Some(self.results.len() - 1));
+        }
+    }
+
     fn needs_search(&self) -> bool {
         self.search_pending
             && self.last_keystroke.elapsed() >= Duration::from_millis(SEARCH_DEBOUNCE_MS)
@@ -216,18 +247,23 @@ impl App {
         let mode_str = format!("{}", self.search_mode);
         let latency_str = self
             .search_latency_ms
-            .map(|ms| format!(" | {ms} ms"))
+            .map(|ms| format!(" | {ms}ms"))
             .unwrap_or_default();
+        let db_str = if self.total_commands > 0 {
+            format!(" | {} in db", self.total_commands)
+        } else {
+            String::new()
+        };
 
         if self.show_favorites_only {
-            self.status_msg = format!("[{mode_str}] ★ {count} pinned{latency_str}");
+            self.status_msg = format!("[{mode_str}] ★ {count} pinned{latency_str}{db_str}");
         } else if self.recent_only {
-            self.status_msg = format!("[{mode_str}] ⏱ {count} recent{latency_str}");
+            self.status_msg = format!("[{mode_str}] ⏱ {count} recent{latency_str}{db_str}");
         } else if self.query.is_empty() {
-            self.status_msg = format!("[{mode_str}] {count} commands{latency_str}");
+            self.status_msg = format!("[{mode_str}] {count} commands{latency_str}{db_str}");
         } else {
             self.status_msg = format!(
-                "[{mode_str}] {count} result{}{latency_str}",
+                "[{mode_str}] {count} result{}{latency_str}{db_str}",
                 if count == 1 { "" } else { "s" }
             );
         }
@@ -342,12 +378,25 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         // ── Exit ──
         KeyCode::Esc => return true,
 
-        // ── Ctrl+C: copy selected command + exit ──
+        // ── Ctrl+C: copy if selected, quit if nothing selected ──
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if let Some(result) = app.selected_result() {
-                let _ = copy_to_clipboard(&result.command.clone());
+                let cmd = result.command.clone();
+                if copy_to_clipboard(&cmd) {
+                    let short = if cmd.len() > 40 {
+                        format!("{}…", &cmd[..40])
+                    } else {
+                        cmd
+                    };
+                    app.clipboard_feedback =
+                        Some((format!("Copied: {short}"), true, Instant::now()));
+                } else {
+                    app.clipboard_feedback =
+                        Some(("Clipboard unavailable".to_string(), false, Instant::now()));
+                }
+            } else {
+                return true;
             }
-            return true;
         }
 
         // ── Shift+Enter: ask the shell hook to execute selected command ──
@@ -382,29 +431,13 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.mark_dirty();
         }
 
-        // ── Ctrl+F: toggle FTS-only mode ──
+        // ── Ctrl+F: cycle search mode (FTS → Semantic → Hybrid) ──
         KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.search_mode = if app.search_mode == SearchMode::FtsOnly {
-                SearchMode::Hybrid
-            } else {
-                SearchMode::FtsOnly
+            app.search_mode = match app.search_mode {
+                SearchMode::FtsOnly => SearchMode::SemanticOnly,
+                SearchMode::SemanticOnly => SearchMode::Hybrid,
+                SearchMode::Hybrid => SearchMode::FtsOnly,
             };
-            app.mark_dirty();
-        }
-
-        // ── Ctrl+S: toggle Semantic-only mode ──
-        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.search_mode = if app.search_mode == SearchMode::SemanticOnly {
-                SearchMode::Hybrid
-            } else {
-                SearchMode::SemanticOnly
-            };
-            app.mark_dirty();
-        }
-
-        // ── Ctrl+H: toggle Hybrid mode ──
-        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.search_mode = SearchMode::Hybrid;
             app.mark_dirty();
         }
 
@@ -416,6 +449,12 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         // ── Navigation ──
         KeyCode::Down => app.select_next(),
         KeyCode::Up => app.select_prev(),
+        KeyCode::PageDown => app.select_page_down(10),
+        KeyCode::PageUp => app.select_page_up(10),
+
+        // ── Ctrl+Home / Ctrl+End: jump to first/last result ──
+        KeyCode::Home if key.modifiers.contains(KeyModifiers::CONTROL) => app.select_first(),
+        KeyCode::End if key.modifiers.contains(KeyModifiers::CONTROL) => app.select_last(),
 
         // ── Action keys (UPPERCASE = action, lowercase = type into search) ──
 
@@ -656,6 +695,36 @@ fn draw_results_list(f: &mut Frame, app: &mut App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(BG_PRIMARY));
+
+    // Empty state with helpful tips.
+    if items.is_empty() && !app.query.is_empty() {
+        let empty_lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  No matches found.",
+                Style::default()
+                    .fg(FG_SECONDARY)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled("  Try:", Style::default().fg(FG_DIM))),
+            Line::from(Span::styled(
+                "    • Broader keywords",
+                Style::default().fg(FG_SECONDARY),
+            )),
+            Line::from(Span::styled(
+                "    • Toggle search mode (Ctrl+F)",
+                Style::default().fg(FG_SECONDARY),
+            )),
+            Line::from(Span::styled(
+                "    • Import shell history (ggnmem import auto)",
+                Style::default().fg(FG_SECONDARY),
+            )),
+        ];
+        let paragraph = Paragraph::new(empty_lines).block(block);
+        f.render_widget(paragraph, area);
+        return;
+    }
 
     let list = List::new(items).block(block).highlight_style(
         Style::default()
@@ -933,6 +1002,17 @@ fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
                 Span::styled(format!("{score_pct}%"), Style::default().fg(ACCENT_GREEN)),
             ]),
             Line::from(vec![
+                Span::styled("Source    ", Style::default().fg(FG_DIM)),
+                Span::styled(
+                    format!("{}", result.source),
+                    Style::default().fg(match result.source {
+                        SearchSource::Fts => ACCENT_CYAN,
+                        SearchSource::Semantic => ACCENT_PURPLE,
+                        SearchSource::Hybrid => ACCENT_YELLOW,
+                    }),
+                ),
+            ]),
+            Line::from(vec![
                 Span::styled("Runs      ", Style::default().fg(FG_DIM)),
                 Span::styled(
                     format!("{}", result.run_count),
@@ -1003,19 +1083,17 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
 
     let help_spans = vec![
         Span::styled("^F", Style::default().fg(ACCENT_CYAN)),
-        Span::styled(" fts ", Style::default().fg(FG_DIM)),
-        Span::styled("^S", Style::default().fg(ACCENT_CYAN)),
-        Span::styled(" sem ", Style::default().fg(FG_DIM)),
-        Span::styled("^H", Style::default().fg(ACCENT_CYAN)),
-        Span::styled(" hyb ", Style::default().fg(FG_DIM)),
+        Span::styled(" mode ", Style::default().fg(FG_DIM)),
         Span::styled("^L", Style::default().fg(ACCENT_CYAN)),
         Span::styled(" clear ", Style::default().fg(FG_DIM)),
+        Span::styled("^C", Style::default().fg(ACCENT_CYAN)),
+        Span::styled(" copy ", Style::default().fg(FG_DIM)),
         Span::styled("Enter", Style::default().fg(ACCENT_CYAN)),
         Span::styled(" ins ", Style::default().fg(FG_DIM)),
-        Span::styled("C", Style::default().fg(ACCENT_CYAN)),
-        Span::styled(" copy ", Style::default().fg(FG_DIM)),
         Span::styled("Tab", Style::default().fg(ACCENT_CYAN)),
         Span::styled(" preview ", Style::default().fg(FG_DIM)),
+        Span::styled("PgUp/Dn", Style::default().fg(ACCENT_CYAN)),
+        Span::styled(" page ", Style::default().fg(FG_DIM)),
         Span::styled("Esc", Style::default().fg(ACCENT_PINK)),
         Span::styled(" quit ", Style::default().fg(FG_DIM)),
     ];

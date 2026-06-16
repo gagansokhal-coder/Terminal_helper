@@ -98,6 +98,7 @@ When acting on this repository, execute tasks in the following sequence unless o
 9. **Phase 18: Knowledge Base.** Implement built-in command documentation, `ggnmem-knowledge` crate, and custom pack loading.
 10. **Phase 19: Release Automation.** Build the GitHub Actions CI/CD pipelines with version verification and automated tag-based releases.
 11. **Phase 20: History Import.** Implement Bash, Zsh, and Fish history parsing, batch database insertion, and deduplication logic.
+12. **Phase 21: Enhanced TUI.** Polish TUI with Ctrl+F mode cycling, Ctrl+C copy behavior, PgUp/PgDn navigation, empty state tips, and doctor TUI diagnostics.
 
 **END OF SYSTEM DIRECTIVES.** Proceed with generating the required workspace architecture.
 
@@ -111,14 +112,17 @@ The interactive terminal history UI (`ggnmem ui`) supports hybrid search (FTS + 
   * **FTS Only**: Fast, keyword-only search without semantic overhead.
   * **Semantic Only**: Vector similarity search without fuzzy matching.
 * **Keyboard Shortcuts**:
-  * `Ctrl+F`: Toggle FTS-only mode
-  * `Ctrl+S`: Toggle Semantic-only mode
-  * `Ctrl+H`: Toggle Hybrid mode
+  * `Ctrl+F`: Cycle search mode (FTS → Semantic → Hybrid)
   * `Ctrl+L`: Clear search query text
+  * `Ctrl+C`: Copy selected command (quit if nothing selected)
   * `Enter`: Insert selected command into prompt
   * `Shift+Enter`: Execute selected command directly
-  * `Shift+C`: Copy to clipboard
+  * `Tab`: Toggle preview panel
+  * `PgUp/PgDn`: Page navigation
+  * `Ctrl+Home/End`: Jump to first/last result
   * `Esc`: Exit UI
 * **UI Elements**:
-  * **Status Bar**: Mode badge, result count, server-side latency (e.g., `[HYBRID] 12 results | 42 ms`).
+  * **Status Bar**: Mode badge, result count, latency, database count (e.g., `[HYBRID] 12 results | 42ms | 223 in db`).
   * **Source Labels**: Compact, color-coded badges indicating match origin (`[FTS]`, `[SEM]`, `[HYB]`).
+  * **Preview Panel**: Command details, CWD, timestamp, exit code, score, search source, run count.
+  * **Empty State**: Helpful tips when search yields no results.

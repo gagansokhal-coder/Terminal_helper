@@ -53,8 +53,11 @@ $ ggnmem search "check git changes"
 
 ### 🖥️ Interactive TUI
 - Full-screen terminal UI bound to `Ctrl+R`
-- Toggle between Hybrid / FTS-only / Semantic-only modes
-- Color-coded source badges, latency display, keyboard navigation
+- Cycle search modes with `Ctrl+F`: FTS → Semantic → Hybrid
+- Color-coded source badges, latency display, database count in status bar
+- `Ctrl+C` to copy selected command, `PgUp/PgDn` for page navigation
+- Command preview panel with score, source, exit code, and run count
+- Helpful empty-state tips when no results are found
 
 ### 🔒 Privacy First
 - All data stored locally in SQLite (WAL mode)
@@ -328,6 +331,7 @@ ggnmem import bash --file /path/to/custom_history
 | Knowledge base (ask, explain, learn) | ✅ Done |
 | CI/CD + automated releases | ✅ Done |
 | Shell history import (Bash, Zsh, Fish) | ✅ Done |
+| Enhanced TUI & Ctrl+R experience | ✅ Done |
 | Windows PowerShell support | 🔜 Planned |
 | Ghost-text autosuggestions | 🔜 Future |
 | Fish / Nushell integration | 🔜 Future |

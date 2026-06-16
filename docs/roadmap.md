@@ -279,6 +279,26 @@ Milestone:
 
 - Users can populate ggnmem with their existing shell history in seconds.
 
+### Phase 21 — Enhanced TUI & Ctrl+R Experience (Completed)
+
+Goal: polish the TUI into a powerful command recall interface with refined keybindings and navigation.
+
+Deliverables:
+
+- `Ctrl+F` cycles search modes: FTS → Semantic → Hybrid (replaces Ctrl+S/Ctrl+H).
+- `Ctrl+C` Option C behavior: copies selected command (stays in UI), quits when nothing is selected.
+- `PgUp/PgDn` for page navigation (10 items per page).
+- `Ctrl+Home/Ctrl+End` to jump to first/last result.
+- Empty state with helpful tips when search yields no matches.
+- Status bar shows database command count alongside results and latency.
+- Preview panel displays search source (FTS/SEM/HYB) with color coding.
+- `ggnmem doctor` reports TUI availability and clipboard tool detection.
+- Updated footer help bar reflecting all new keybindings.
+
+Milestone:
+
+- TUI feels like a modern fuzzy finder with full keyboard navigation and instant feedback.
+
 ## Linux-First Rollout
 
 Linux is the first supported platform because it exercises the core architecture with less platform-specific risk than Windows.
