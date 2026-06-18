@@ -7,26 +7,20 @@
 - **Bash** or **Zsh** shell
 - No build tools required for pre-built releases
 
-## Quick Install (from Release Bundle)
+## Quick Install (Recommended)
 
-Download the latest release for your architecture:
+The easiest way to install or upgrade `ggnmem` is using the official bootstrap script. This script automatically detects your architecture (x86_64 or ARM64), verifies checksums, extracts the bundle safely, and sets up your shell hooks.
 
 ```bash
-# For x86_64 (most systems)
-tar xzf ggnmem-linux-x86_64.tar.gz
-
-# For ARM64
-tar xzf ggnmem-linux-aarch64.tar.gz
-
-# Install
-bash install.sh
+curl -sSL https://raw.githubusercontent.com/gagansokhal-coder/Terminal_helper/main/scripts/install-online.sh | bash
 ```
 
 The installer will:
-1. Copy binaries to `~/.local/bin/`
-2. Create default configuration at `~/.config/ggnmem/config.toml`
-3. Set up shell integration (Ctrl+R hook)
-4. Verify the installation
+1. Safely download and verify the binary bundle in `/tmp`
+2. Copy binaries to `~/.local/bin/`
+3. Create default configuration at `~/.config/ggnmem/config.toml`
+4. Set up shell integration (Ctrl+R hook) for Bash and Zsh
+5. Verify the installation
 
 ## Install from Source
 

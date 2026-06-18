@@ -82,17 +82,15 @@ $ ggnmem search "check git changes"
 
 ## Installation
 
-### Pre-built Binaries (Recommended)
+### Quick Install (Recommended)
 
-Download the latest release for your platform from [**GitHub Releases**](https://github.com/gagansokhal-coder/Terminal_helper/releases):
+The easiest way to install or upgrade `ggnmem` on Linux or WSL:
 
 ```bash
-# Download and extract
-tar xzf ggnmem-linux-x86_64.tar.gz
-
-# Install (copies binaries, sets up shell integration)
-bash install.sh
+curl -sSL https://raw.githubusercontent.com/gagansokhal-coder/Terminal_helper/main/scripts/install-online.sh | bash
 ```
+
+The installer automatically detects your platform, verifies checksums, and safely sets up the daemon and shell hooks.
 
 ### Build from Source
 
@@ -332,6 +330,8 @@ ggnmem import bash --file /path/to/custom_history
 | CI/CD + automated releases | ✅ Done |
 | Shell history import (Bash, Zsh, Fish) | ✅ Done |
 | Enhanced TUI & Ctrl+R experience | ✅ Done |
+| Self-update pipeline (`ggnmem self-update`) | ✅ Done |
+| Frictionless one-line installer (`curl \| bash`) | ✅ Done |
 | Windows PowerShell support | 🔜 Planned |
 | Ghost-text autosuggestions | 🔜 Future |
 | Fish / Nushell integration | 🔜 Future |
