@@ -136,7 +136,13 @@ pub fn cmd_self_update(args: &[String]) -> Result<()> {
     }
 
     // 3. Verify
-    verify_step(&agent, &release, &asset, &dest_path, is_verify || is_extract_test)?;
+    verify_step(
+        &agent,
+        &release,
+        &asset,
+        &dest_path,
+        is_verify || is_extract_test,
+    )?;
 
     if is_verify {
         return Ok(());
@@ -197,16 +203,15 @@ fn download_step(
     }
     println!("Starting download...");
 
-    std::fs::create_dir_all(tmp_dir)
-        .context("Failed to create temporary directory for update")?;
+    std::fs::create_dir_all(tmp_dir).context("Failed to create temporary directory for update")?;
 
     let download_response = agent
         .get(&asset.browser_download_url)
         .call()
         .context("Failed to download release asset")?;
 
-    let mut dest_file = std::fs::File::create(dest_path)
-        .context("Failed to create destination file for update")?;
+    let mut dest_file =
+        std::fs::File::create(dest_path).context("Failed to create destination file for update")?;
 
     std::io::copy(&mut download_response.into_reader(), &mut dest_file)
         .context("Download interrupted or disk full")?;
@@ -244,8 +249,8 @@ fn verify_step(
     let expected_hash = get_expected_hash(&checksums_txt, &asset.name)
         .context(format!("No checksum entry found for {}", asset.name))?;
 
-    let actual_hash = compute_file_sha256(dest_path)
-        .context("Failed to compute SHA256 of downloaded file")?;
+    let actual_hash =
+        compute_file_sha256(dest_path).context("Failed to compute SHA256 of downloaded file")?;
 
     if verbose {
         println!("\nDownloaded:");
@@ -278,11 +283,9 @@ fn extract_step(
     println!("Starting extraction...");
 
     if extract_dir.exists() {
-        std::fs::remove_dir_all(extract_dir)
-            .context("Failed to clear extraction directory")?;
+        std::fs::remove_dir_all(extract_dir).context("Failed to clear extraction directory")?;
     }
-    std::fs::create_dir_all(extract_dir)
-        .context("Failed to create extraction directory")?;
+    std::fs::create_dir_all(extract_dir).context("Failed to create extraction directory")?;
 
     if let Err(e) = extract_tar_gz(dest_path, extract_dir) {
         let _ = std::fs::remove_dir_all(extract_dir);
@@ -791,7 +794,7 @@ mod tests {
             .build();
 
         // Check if `agent` is instantiated and has basic traits
-        // Because `ureq::Agent`'s timeout values are not exposed, 
+        // Because `ureq::Agent`'s timeout values are not exposed,
         // this regression test mainly serves to ensure compiling with the larger timeouts.
         assert!(true, "Agent initialized with increased timeouts");
     }
