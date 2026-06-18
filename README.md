@@ -103,6 +103,22 @@ ggnmem ask "find cargo commands"
 
 ---
 
+## Architecture
+
+```text
+Shell
+  ↓
+Capture Hook
+  ↓
+Daemon
+  ↓
+SQLite + FTS5 + Vectors
+  ↓
+Search / Semantic Search / AI
+```
+
+---
+
 ## AI Features
 
 ggnmem's semantic search uses vector embeddings to understand the *intent* behind your commands.
