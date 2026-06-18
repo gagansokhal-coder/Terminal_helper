@@ -299,6 +299,22 @@ Milestone:
 
 - TUI feels like a modern fuzzy finder with full keyboard navigation and instant feedback.
 
+### Phase 22 — Self-Update Pipeline (Completed)
+
+Goal: Fix large binary download timeouts and standardize the update paths.
+
+Deliverables:
+
+- Granular execution steps: check, download, verify, extract, install.
+- Increased connection (30s) and read (120s) timeouts.
+- Console progress logging for each update phase.
+- Unified download logic for installation and `--download-only` modes.
+- Regression tests for update timeouts.
+
+Milestone:
+
+- Self-update reliably downloads and installs large binaries over slow networks without prematurely timing out.
+
 ## Linux-First Rollout
 
 Linux is the first supported platform because it exercises the core architecture with less platform-specific risk than Windows.
