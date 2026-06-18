@@ -177,7 +177,7 @@ fn check_step(agent: &ureq::Agent) -> Result<(GithubRelease, String, GithubAsset
     let releases: Vec<GithubRelease> = serde_json::from_reader(response.into_reader())
         .context("Failed to parse GitHub response")?;
 
-    let mut release = releases.into_iter().next().context("No releases found")?;
+    let release = releases.into_iter().next().context("No releases found")?;
 
     let latest_version = release.tag_name.trim_start_matches('v').to_string();
     let (target, display) = get_platform_info();
@@ -788,7 +788,7 @@ mod tests {
     fn test_self_update_download_timeout_regression() {
         // Just verify that the builder is created correctly and timeouts are set
         // to larger values to avoid regressions. This ensures that the agent will not time out early.
-        let agent = ureq::builder()
+        let _agent = ureq::builder()
             .timeout_connect(std::time::Duration::from_secs(30))
             .timeout_read(std::time::Duration::from_secs(120))
             .build();
@@ -796,6 +796,6 @@ mod tests {
         // Check if `agent` is instantiated and has basic traits
         // Because `ureq::Agent`'s timeout values are not exposed,
         // this regression test mainly serves to ensure compiling with the larger timeouts.
-        assert!(true, "Agent initialized with increased timeouts");
+        // Agent initialized with increased timeouts
     }
 }
