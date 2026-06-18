@@ -9,176 +9,193 @@ Your shell history, understood — not just stored.
 [![CI](https://github.com/gagansokhal-coder/Terminal_helper/actions/workflows/ci.yml/badge.svg)](https://github.com/gagansokhal-coder/Terminal_helper/actions/workflows/ci.yml)
 [![Release](https://github.com/gagansokhal-coder/Terminal_helper/actions/workflows/release.yml/badge.svg)](https://github.com/gagansokhal-coder/Terminal_helper/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform: Linux](https://img.shields.io/badge/Platform-Linux%20%7C%20WSL-informational)](INSTALL.md)
+[![Built with Rust](https://img.shields.io/badge/Built%20with-Rust%20🦀-orange)](https://www.rust-lang.org/)
+
+*A local-first, privacy-focused terminal history intelligence system built in Rust.<br/>Search your commands by **intent**, not just keystrokes — all without ever leaving your machine.*
+
+[Quick Install](#quick-install) · [Features](#features) · [Example Usage](#example-usage) · [Architecture](#architecture) · [Docs](INSTALL.md)
 
 </div>
 
 ---
 
-## What is ggnmem?
-
-**ggnmem** is a local-first, privacy-focused terminal history intelligence system built in Rust. It captures every command you run, indexes it with both keyword and AI-powered semantic search, and lets you retrieve it instantly — all without sending a single byte to the cloud.
-
-Think of it as `Ctrl+R` on steroids:
-
-- Type `"show running containers"` and find `docker ps` — even if you never typed those exact words.
-- Search by intent, not just keystrokes.
-- Everything stays on your machine. No accounts, no telemetry, no API keys.
-
-```
-$ ggnmem search "check git changes"
-
-  [HYB] git status                          ~/projects/ggnmem    [0]   12ms
-  [FTS] git diff --staged                   ~/projects/ggnmem    [0]    8ms
-  [SEM] git log --oneline -5               ~/projects/ggnmem    [0]   45ms
-```
-
----
-
 ## Features
 
-### 🔍 Hybrid Search Engine
-- **FTS5 keyword search** — blazing-fast full-text search with BM25 ranking
-- **Semantic vector search** — AI-powered intent matching using local embeddings
-- **Reciprocal Rank Fusion** — intelligently merges both result sets for the best answer
-
-### 🧠 Local AI (Zero Cloud)
-- Runs **100% offline** — no API keys, no cloud calls, no telemetry
-- Lightweight ONNX-based embedding models (MiniLM, BGE)
-- Background daemon handles embedding generation without blocking your terminal
-
-### ⚡ Built for Speed
-- Shell hook latency: **< 10ms** — you won't notice it
-- Search response: **< 100ms** on typical history
-- Idle daemon memory: **< 50 MB**
-
-### 🖥️ Interactive TUI
-- Full-screen terminal UI bound to `Ctrl+R`
-- Cycle search modes with `Ctrl+F`: FTS → Semantic → Hybrid
-- Color-coded source badges, latency display, database count in status bar
-- `Ctrl+C` to copy selected command, `PgUp/PgDn` for page navigation
-- Command preview panel with score, source, exit code, and run count
-- Helpful empty-state tips when no results are found
-
-### 🔒 Privacy First
-- All data stored locally in SQLite (WAL mode)
-- Secret redaction — API keys, tokens, passwords are scrubbed before storage
-- Database and IPC sockets locked with strict file permissions
-- No network requests, ever
-
-### 📦 Self-Contained
-- Single-binary CLI + background daemon
-- Shell integration for **Bash** and **Zsh**
-- Built-in install, upgrade, uninstall, and health checks
-- Automated release pipeline with GitHub Actions
-
-### 📥 Shell History Import
-- Import existing Bash, Zsh, and Fish history instantly
-- Auto-detect your shell or specify explicitly
-- Deduplication — never imports the same command twice
-- Preview and dry-run modes for safety
-- Handles 100k+ history entries with streaming + batch writes
+- ⚡ **Automatic command capture** — shell hooks silently record every command in < 10ms
+- 🔍 **Hybrid search (FTS5 + semantic)** — full-text keyword search *and* AI-powered intent matching, fused with Reciprocal Rank Fusion
+- 🧠 **AI-powered embeddings** — lightweight local ONNX models (MiniLM, BGE) generate vector embeddings for semantic understanding
+- 🖥️ **Interactive TUI** — full-screen terminal UI bound to `Ctrl+R` with mode cycling, color-coded badges, and preview panes
+- 📥 **Command history import** — instantly import existing Bash, Zsh, and Fish history with deduplication and dry-run modes
+- 🔄 **Self-update system** — upgrade in place with a single command: `ggnmem self-update`
+- 📦 **One-line installer** — `curl | bash` bootstrap that detects architecture, verifies checksums, and configures shell hooks
+- 🏠 **Local-first architecture** — all data lives in SQLite on your machine; no servers, no accounts, no cloud
+- 🔒 **Privacy focused** — zero network requests, secret redaction, strict file permissions; your commands never leave your system
 
 ---
 
-## Installation
+## Why ggnmem?
 
-### Quick Install (Recommended)
+**The problem:** Every developer has been there. You spent 20 minutes crafting the perfect `ffmpeg` command, a gnarly `awk` pipeline, or a multi-flag `docker` incantation — and three weeks later, you can't remember it. You press `Ctrl+R`, type a half-remembered keyword, scroll through hundreds of irrelevant matches, and eventually give up and Google it again.
 
-The easiest way to install or upgrade `ggnmem` on Linux or WSL:
+Traditional shell history is a flat log. It stores *keystrokes*, not *meaning*. It can't tell you which command "shows running containers" — because it doesn't understand intent.
 
-```bash
-curl -sSL https://raw.githubusercontent.com/gagansokhal-coder/Terminal_helper/main/scripts/install-online.sh | bash
-```
+**The solution:** ggnmem replaces your dumb history file with an intelligent, searchable memory engine:
 
-The installer automatically detects your platform, verifies checksums, and safely sets up the daemon and shell hooks.
+| You type | ggnmem finds |
+|----------|-------------|
+| `"show running containers"` | `docker ps` |
+| `"check git changes"` | `git status`, `git diff --staged` |
+| `"compress a folder"` | `tar -czf archive.tar.gz ./folder` |
+| `"find large files"` | `find / -type f -size +100M` |
+| `"SSH tunnel to database"` | `ssh -L 5432:localhost:5432 user@bastion` |
 
-### Build from Source
-
-Requires [Rust](https://rustup.rs/) 1.76+:
-
-```bash
-git clone https://github.com/gagansokhal-coder/Terminal_helper.git
-cd Terminal_helper
-
-# Build release binaries
-bash scripts/build_release.sh
-
-# Install
-cd release && bash install.sh
-```
-
-### Supported Platforms
-
-| Platform | Architecture | Status |
-|----------|-------------|--------|
-| Linux    | x86_64      | ✅ Supported |
-| Linux    | aarch64     | ✅ Supported |
-| WSL      | x86_64      | ✅ Supported |
-| Windows  | —           | 🔜 Planned  |
+It captures every command automatically, indexes it with both keyword and AI-powered semantic search, and retrieves it instantly — all **100% offline**, with **zero cloud dependencies**.
 
 ---
 
-## Quick Start
+## Quick Install
 
 ```bash
-# 1. Start the background daemon
-ggnmem start
+curl -fsSL https://raw.githubusercontent.com/gagansokhal-coder/Terminal_helper/main/scripts/install-online.sh | bash
+```
 
-# 2. Verify everything is working
+The installer automatically detects your architecture (x86_64 / aarch64), verifies checksums, installs binaries to `~/.local/bin/`, and sets up shell hooks for Bash and Zsh.
+
+> **Supported platforms:** Linux x86_64 · Linux aarch64 · WSL (Windows Subsystem for Linux)
+
+For manual installation, build-from-source instructions, and WSL-specific notes, see [**INSTALL.md**](INSTALL.md).
+
+---
+
+## First Run
+
+```bash
+# 1. Check system health
 ggnmem doctor
 
-# 3. Open a new terminal and use it normally — commands are captured automatically
+# 2. Start the background daemon
+ggnmem start
 
-# 4. Search your history
-ggnmem search "docker compose"
+# 3. Search your history
+ggnmem search docker
 
-# 5. Interactive search (Ctrl+R replacement)
-ggnmem ui
-
-# 6. Import your existing shell history
-ggnmem import auto
-
-# 7. View recent commands
-ggnmem recent
+# 4. Ask in natural language
+ggnmem ask "show running containers"
 ```
 
-### Shell Integration
-
-After installing, your shell's `Ctrl+R` is upgraded to ggnmem's interactive search. Open a new terminal or source your shell config:
-
-```bash
-source ~/.bashrc   # or ~/.zshrc
-```
-
-### Useful Commands
-
-```bash
-ggnmem search <query>     # Search history (hybrid mode)
-ggnmem ui                 # Interactive TUI search
-ggnmem recent             # Show recent commands
-ggnmem stats              # Database statistics
-ggnmem doctor             # Full health check
-ggnmem version --verbose  # Detailed version info
-ggnmem import auto        # Import shell history
-```
+After starting the daemon, open a **new terminal** — commands are captured automatically via shell hooks. Press `Ctrl+R` for the interactive search TUI.
 
 ---
 
-## AI Setup
-
-ggnmem works out of the box with keyword search. To enable AI-powered semantic search:
+## Example Usage
 
 ```bash
-# Interactive setup wizard
+# Keyword search across your history
+ggnmem search "kubectl apply"
+
+# Natural-language semantic search
+ggnmem search "restart the web server"
+
+# Ask the knowledge base
+ggnmem ask "how do I squash git commits?"
+
+# Interactive TUI with mode cycling (FTS → Semantic → Hybrid)
+ggnmem ui
+
+# View recent commands
+ggnmem recent
+
+# Import your existing shell history
+ggnmem import auto
+
+# Check database statistics
+ggnmem stats
+
+# Set up local AI embeddings
 ggnmem ai setup
 
-# Or manually:
-ggnmem ai enable
-ggnmem ai install          # Downloads a lightweight embedding model (~30 MB)
-ggnmem ai status           # Verify AI is active
+# Run a full health check
+ggnmem doctor
+
+# Upgrade to the latest release
+ggnmem self-update
 ```
 
-### Available Models
+### Search in Action
+
+```
+$ ggnmem search "check disk usage"
+
+  [HYB] df -h                                 ~/            [0]   12ms
+  [SEM] du -sh /var/log/*                      ~/logs        [0]   38ms
+  [FTS] ncdu /home                             ~/            [0]    6ms
+```
+
+Results are tagged by source — **FTS** (keyword), **SEM** (semantic), or **HYB** (hybrid fusion) — with latency and exit code displayed inline.
+
+---
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Shell (Bash / Zsh)                                              │
+│  preexec / precmd hooks → ggnmem ingest (< 10ms)                 │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │ Unix Domain Socket (IPC)
+┌──────────────────────────────▼───────────────────────────────────┐
+│  ggnmem-daemon (Background Process)                               │
+│                                                                   │
+│  ┌───────────┐   ┌────────────┐   ┌──────────────────┐           │
+│  │ Ingestion  │   │ Embedding  │   │ Search Engine    │           │
+│  │ Queue      │──▶│ Worker     │   │ FTS5 + Vectors   │           │
+│  └───────────┘   └────────────┘   └──────────────────┘           │
+│        │               │                   │                      │
+│  ┌─────▼───────────────▼───────────────────▼──────┐              │
+│  │              SQLite (WAL mode)                  │              │
+│  │   commands  │  FTS5 index  │  vector store      │              │
+│  └────────────────────────────────────────────────┘              │
+└──────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+                        Search / AI
+                  (Hybrid results via RRF)
+```
+
+### Crate Structure
+
+| Crate | Purpose |
+|-------|---------|
+| `ggnmem-cli` | CLI binary, shell hooks, TUI, self-update |
+| `ggnmem-daemon` | Background daemon, IPC server, configuration |
+| `ggnmem-db` | SQLite schema, migrations, FTS5 search engine |
+| `ggnmem-ai` | ONNX embeddings, vector store, model management |
+| `ggnmem-model` | Data models and protocol definitions |
+| `ggnmem-pty` | PTY proxy for terminal overlay |
+| `ggnmem-knowledge` | Built-in command knowledge base |
+
+### Performance
+
+| Metric | Target |
+|--------|--------|
+| Shell hook latency | < 10ms |
+| Search response | < 100ms |
+| Daemon idle memory | < 50 MB |
+
+---
+
+## AI Features
+
+ggnmem goes beyond keyword matching. Its AI subsystem converts commands into dense vector embeddings so you can **search by meaning, not just text**.
+
+### Semantic Search
+
+When you search for `"show running containers"`, ggnmem doesn't just look for those exact words — it computes a vector embedding of your query and finds commands whose *meaning* is closest, even if the words are completely different (like `docker ps`).
+
+### Local Embeddings
+
+All AI inference runs **locally on your CPU** using lightweight [ONNX Runtime](https://onnxruntime.ai/) models:
 
 | Model | Size | Speed | Quality |
 |-------|------|-------|---------|
@@ -186,135 +203,83 @@ ggnmem ai status           # Verify AI is active
 | BGE-Small-EN | ~50 MB | Medium | Better |
 
 ```bash
-# List models
-ggnmem ai models
-
-# Switch active model
-ggnmem ai use bge-small-en-v1.5
-
-# Benchmark installed models
-ggnmem ai benchmark
-
-# Rebuild all embeddings (after model switch)
-ggnmem ai reindex
+ggnmem ai setup          # Interactive setup wizard
+ggnmem ai install         # Download embedding model (~30 MB)
+ggnmem ai status          # Check AI subsystem health
+ggnmem ai models          # List available models
+ggnmem ai benchmark       # Benchmark model performance
 ```
 
-### AI Diagnostics
+### No Cloud Dependency
+
+- Models are downloaded once and run entirely offline
+- No API keys, no subscriptions, no rate limits
+- No data ever leaves your machine
+- Works on air-gapped systems after initial model download
+
+---
+
+## Installation
+
+For detailed installation instructions — including manual install, build from source, WSL-specific notes, and troubleshooting — see the full [**Installation Guide (INSTALL.md)**](INSTALL.md).
+
+---
+
+## Updating
 
 ```bash
-ggnmem ai doctor           # Check model health
-ggnmem ai verify-model     # Verify model loads and produces embeddings
+# One-command self-update (downloads latest release automatically)
+ggnmem self-update
+```
+
+The self-update system:
+1. Checks GitHub Releases for the latest version
+2. Downloads the correct binary for your architecture
+3. Verifies checksums
+4. Stops the daemon, replaces binaries, and restarts
+5. Preserves your configuration and database
+
+You can also upgrade manually:
+
+```bash
+# Re-run the online installer
+curl -fsSL https://raw.githubusercontent.com/gagansokhal-coder/Terminal_helper/main/scripts/install-online.sh | bash
+
+# Or from a release tarball
+tar xzf ggnmem-linux-x86_64.tar.gz && bash install.sh
 ```
 
 ---
 
-## GitHub Releases
+## Privacy
 
-Releases are fully automated. Pushing a version tag triggers the CI/CD pipeline:
+ggnmem is built on a **local-first philosophy**. Your terminal history is deeply personal — it contains project names, server addresses, file paths, and sometimes secrets. We believe that data should never leave your control.
 
-```bash
-# Tag a release
-git tag -a v0.4.0-alpha -m "v0.4.0-alpha"
-git push origin v0.4.0-alpha
-```
+### Principles
 
-The pipeline automatically:
-1. Runs all CI checks (fmt, clippy, tests)
-2. Verifies tag version matches `Cargo.toml`
-3. Cross-compiles for x86_64 and aarch64
-4. Verifies binary version matches tag
-5. Creates a GitHub Release with tarballs, checksums, and release notes
+- **Zero network requests** — ggnmem never phones home, never checks for analytics, never uploads anything
+- **No accounts or telemetry** — there is no signup, no tracking, no usage metrics
+- **Secret redaction** — API keys, tokens, and passwords are automatically scrubbed before storage
+- **Strict file permissions** — database files and IPC sockets are locked to your user
+- **Fully auditable** — ggnmem is open source; read every line of code yourself
 
-Pre-release tags (`-alpha`, `-beta`, `-rc`) are marked as prerelease automatically.
+### Data Storage
 
-See [`.github/workflows/release.yml`](.github/workflows/release.yml) for the full pipeline.
+All data lives on your machine in standard XDG directories:
 
----
-
-## History Import
-
-New to ggnmem? Import your existing shell history so you start with a populated database:
-
-```bash
-# Auto-detect your shell and import
-ggnmem import auto
-
-# Or specify explicitly
-ggnmem import bash
-ggnmem import zsh
-ggnmem import fish
-```
-
-### Options
-
-```bash
-# Preview what would be imported (first 20 commands)
-ggnmem import bash --preview
-
-# Dry run — show counts without modifying the database
-ggnmem import bash --dry-run
-
-# Import from a custom file path
-ggnmem import bash --file /path/to/custom_history
-```
-
-### Example Output
-
-```text
-  Source: /home/user/.bash_history
-  Shell:  bash
-
-  Parsing history...
-  Found:       12847 entries
-  Filtered:     1203 (shell noise, secrets)
-
-  Importing...
-  Imported:          9421 commands
-  Skipped (dupes):   2223
-  Failed:               0
-
-  Duration: 1.2s
-```
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Shell (Bash / Zsh)                                         │
-│  preexec/precmd hooks → ggnmem ingest (< 10ms)              │
-└───────────────────────────┬─────────────────────────────────┘
-                            │ Unix Domain Socket (IPC)
-┌───────────────────────────▼─────────────────────────────────┐
-│  ggnmem-daemon (Background)                                  │
-│  ┌─────────┐  ┌──────────┐  ┌─────────────┐                │
-│  │ Ingestion│  │ Embedding│  │ Search      │                │
-│  │ Queue    │→ │ Worker   │  │ FTS + Vector│                │
-│  └─────────┘  └──────────┘  └─────────────┘                │
-│       │              │              │                        │
-│  ┌────▼──────────────▼──────────────▼────┐                  │
-│  │         SQLite (WAL mode)             │                  │
-│  │  commands │ FTS5 index │ vector store  │                  │
-│  └───────────────────────────────────────┘                  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Crate Structure
-
-| Crate | Purpose |
-|-------|---------|
-| `ggnmem-cli` | CLI binary, shell hooks, TUI, upgrade command |
-| `ggnmem-daemon` | Background daemon, IPC server, config, storage |
-| `ggnmem-db` | SQLite schema, migrations, FTS5, search engine |
-| `ggnmem-ai` | ONNX embeddings, vector store, model management |
-| `ggnmem-model` | Data models and protocol definitions |
-| `ggnmem-pty` | PTY proxy for terminal overlay |
-| `ggnmem-knowledge` | Built-in command knowledge base |
+| Data | Location |
+|------|----------|
+| Configuration | `~/.config/ggnmem/config.toml` |
+| Command database | `~/.local/share/ggnmem/ggnmem.db` |
+| AI models | `~/.local/share/ggnmem/models/` |
+| Runtime state | `~/.local/state/ggnmem/` |
+| Binaries | `~/.local/bin/ggnmem`, `~/.local/bin/ggnmem-daemon` |
 
 ---
 
 ## Roadmap
+
+### Completed
 
 | Milestone | Status |
 |-----------|--------|
@@ -323,33 +288,27 @@ ggnmem import bash --file /path/to/custom_history
 | Linux daemon (Unix Domain Sockets) | ✅ Done |
 | Bash + Zsh shell capture | ✅ Done |
 | Local AI embeddings (ONNX) | ✅ Done |
-| Hybrid search (RRF) | ✅ Done |
-| Interactive TUI (`Ctrl+R`) | ✅ Done |
-| Install / upgrade / uninstall | ✅ Done |
-| Knowledge base (ask, explain, learn) | ✅ Done |
-| CI/CD + automated releases | ✅ Done |
+| Hybrid search (Reciprocal Rank Fusion) | ✅ Done |
+| Interactive TUI (`Ctrl+R` replacement) | ✅ Done |
+| Install / upgrade / uninstall system | ✅ Done |
+| Knowledge base (`ask`, `explain`, `learn`) | ✅ Done |
+| CI/CD + automated GitHub Releases | ✅ Done |
 | Shell history import (Bash, Zsh, Fish) | ✅ Done |
 | Enhanced TUI & Ctrl+R experience | ✅ Done |
 | Self-update pipeline (`ggnmem self-update`) | ✅ Done |
-| Frictionless one-line installer (`curl \| bash`) | ✅ Done |
-| Windows PowerShell support | 🔜 Planned |
-| Ghost-text autosuggestions | 🔜 Future |
-| Fish / Nushell integration | 🔜 Future |
+| One-line installer (`curl | bash`) | ✅ Done |
+
+### Phase 24+: Future Plans
+
+| Feature | Description |
+|---------|-------------|
+| Windows PowerShell support | Native Windows binary with PowerShell hooks |
+| Ghost-text autosuggestions | Inline command suggestions as you type |
+| Fish / Nushell integration | Expand shell support beyond Bash and Zsh |
+| Team sharing (opt-in) | Share curated command snippets with your team |
+| Plugin system | Extensible hooks for custom indexing and retrieval |
 
 See [docs/roadmap.md](docs/roadmap.md) for the full phased execution plan.
-
----
-
-## Directory Layout
-
-| Path | Purpose |
-|------|---------|
-| `~/.local/bin/ggnmem` | CLI binary |
-| `~/.local/bin/ggnmem-daemon` | Background daemon |
-| `~/.config/ggnmem/config.toml` | Configuration |
-| `~/.local/share/ggnmem/ggnmem.db` | Command database |
-| `~/.local/share/ggnmem/models/` | AI model files |
-| `~/.local/state/ggnmem/` | Runtime state, logs, PID |
 
 ---
 
@@ -370,12 +329,6 @@ This project is licensed under the [MIT License](LICENSE).
 
 ```
 MIT License — Copyright (c) 2026 ggnmem contributors
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files, to deal in the Software
-without restriction, including without limitation the rights to use, copy,
-modify, merge, publish, distribute, sublicense, and/or sell copies of the
-Software, subject to the conditions in the LICENSE file.
 ```
 
 ---
@@ -383,5 +336,7 @@ Software, subject to the conditions in the LICENSE file.
 <div align="center">
 
 **Built with Rust 🦀 · Runs 100% locally · No cloud, no telemetry, no compromise.**
+
+[⬆ Back to top](#ggnmem)
 
 </div>
