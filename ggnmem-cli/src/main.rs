@@ -6,6 +6,7 @@ mod profile;
 mod service;
 mod setup;
 mod tui;
+mod update;
 mod upgrade;
 
 use anyhow::{bail, Context, Result};
@@ -51,6 +52,8 @@ async fn main() -> Result<()> {
         Some("export") => export::cmd_export(&args).await,
         Some("ai") => cmd_ai(&args),
         Some("semantic") => semantic(&args).await,
+        Some("update") => update::cmd_update(&args),
+        Some("self-update") => update::cmd_self_update(&args),
         Some("upgrade") => upgrade::cmd_upgrade(&args),
         Some("ask") => cmd_ask(&args),
         Some("explain") => cmd_explain(&args),
@@ -133,6 +136,8 @@ fn print_usage() {
     println!("setup:");
     println!("  install          Set up shell integration and config");
     println!("  uninstall        Remove ggnmem (--full to include database)");
+    println!("  update           Check for updates");
+    println!("  self-update      Update ggnmem to the latest version");
     println!("  upgrade          Upgrade from a local release bundle");
     println!("  doctor           Check installation and daemon health");
     println!("  version          Show version (--verbose for extended info)");
@@ -416,7 +421,7 @@ pub fn parse_named_arg(args: &[String], name: &str) -> Option<String> {
 }
 
 /// Check if a boolean flag is present in the argument list.
-fn has_flag(args: &[String], name: &str) -> bool {
+pub fn has_flag(args: &[String], name: &str) -> bool {
     args.iter().any(|a| a == name)
 }
 

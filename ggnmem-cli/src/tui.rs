@@ -349,11 +349,10 @@ async fn run_event_loop(
 
         if event::poll(poll_timeout)? {
             match event::read()? {
-                Event::Key(key) => {
-                    if handle_key(app, key) {
-                        break;
-                    }
+                Event::Key(key) if handle_key(app, key) => {
+                    break;
                 }
+                Event::Key(_) => {}
                 Event::Paste(text) => {
                     app.handle_paste(&text);
                 }
