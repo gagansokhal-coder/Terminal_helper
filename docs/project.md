@@ -100,6 +100,7 @@ When acting on this repository, execute tasks in the following sequence unless o
 11. **Phase 20: History Import.** Implement Bash, Zsh, and Fish history parsing, batch database insertion, and deduplication logic.
 12. **Phase 21: Enhanced TUI.** Polish TUI with Ctrl+F mode cycling, Ctrl+C copy behavior, PgUp/PgDn navigation, empty state tips, and doctor TUI diagnostics.
 13. **Phase 22: Self-Update Pipeline.** Refactor self-update to use granular steps (check, download, verify, extract, install), increase network timeouts, add progress logging, and reuse identical download paths.
+14. **Phase 23: Installer & Distribution.** Build `install-online.sh` to provide frictionless one-line installation, dynamic GitHub release discovery, checksum validation, and rollback-protected extraction.
 
 **END OF SYSTEM DIRECTIVES.** Proceed with generating the required workspace architecture.
 

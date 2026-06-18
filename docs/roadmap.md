@@ -315,6 +315,23 @@ Milestone:
 
 - Self-update reliably downloads and installs large binaries over slow networks without prematurely timing out.
 
+### Phase 23 — Installer & Distribution (Completed)
+
+Goal: provide a frictionless, one-line installation experience for users.
+
+Deliverables:
+
+- `install-online.sh` bootstrap script.
+- Automatic platform and architecture detection (Linux x86_64, aarch64).
+- GitHub API integration for dynamic release discovery.
+- Secure checksum verification (SHA256).
+- Safe extraction and artifact validation.
+- Rollback-protected execution of the bundled `install.sh`.
+
+Milestone:
+
+- Users can install `ggnmem` securely via a single `curl | bash` command without manual version hunting.
+
 ## Linux-First Rollout
 
 Linux is the first supported platform because it exercises the core architecture with less platform-specific risk than Windows.
