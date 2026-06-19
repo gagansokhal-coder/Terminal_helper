@@ -78,28 +78,22 @@ ggnmem import auto
 
 ## Example Usage
 
-### First Searches
+### Interactive Terminal Search
 
-```bash
-# Keyword search across your history
-ggnmem search docker
-ggnmem search postgres
+Search thousands of previous commands instantly using
+keyword, semantic, or hybrid ranking.
 
-# Interactive TUI with mode cycling
-ggnmem ui
+![TUI Search](assets/screenshots/tui-search.png)
 
-# Search by meaning instead of exact keywords
-ggnmem semantic "git branch"
-ggnmem semantic "postgres backup"
-```
+### Natural Language Search
 
-### Natural Language Queries
+Ask for commands in plain English.
 
 ```bash
 ggnmem ask "show running containers"
-ggnmem ask "create postgres backup"
-ggnmem ask "find cargo commands"
 ```
+
+![Natural Language Search Demo](assets/screenshots/ask-command.png)
 
 ---
 
@@ -129,13 +123,15 @@ ggnmem's semantic search uses vector embeddings to understand the *intent* behin
 
 ---
 
-## Updating
+## Self Updating
 
-Upgrading is a single command away:
+Keep ggnmem up to date with a single command.
 
 ```bash
 ggnmem self-update
 ```
+
+![Self Update Demo](assets/screenshots/self-update.png)
 
 This command automatically checks for new releases, verifies checksums, swaps binaries, and restarts the daemon while preserving your existing database and configuration.
 
