@@ -363,6 +363,21 @@ Milestone:
 
 - The project has a professional online presence at `ggnmem.mytechy.in`.
 
+### Phase 25.1 — Release Workflow Modernization (Completed)
+
+Goal: Update the automated GitHub release pipeline to advertise the new primary install/upgrade workflows.
+
+Deliverables:
+
+- GitHub release template updated to feature the website link.
+- One-line curl installer highlighted as the primary installation method.
+- `self-update` command highlighted as the primary upgrade method.
+- Internal build scripts and generators updated.
+
+Milestone:
+
+- New GitHub releases automatically guide users to the website and online installer.
+
 ## Linux-First Rollout
 
 Linux is the first supported platform because it exercises the core architecture with less platform-specific risk than Windows.

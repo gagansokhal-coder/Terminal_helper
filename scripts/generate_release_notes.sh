@@ -93,23 +93,33 @@ fi
 cat > "$PROJECT_ROOT/RELEASE_NOTES.md" <<EOF
 # ggnmem ${TAG}
 
+## 🌐 Website
+
+**[ggnmem.mytechy.in](https://ggnmem.mytechy.in)**
+
 ## What's New
 
 ${CHANGELOG}
 
 ## Installation
 
-### Quick Install (from tarball)
+### One-Line Install
 
 \`\`\`bash
-tar xzf ggnmem-linux-x86_64.tar.gz
-bash install.sh
+curl -fsSL https://raw.githubusercontent.com/gagansokhal-coder/Terminal_helper/main/scripts/install-online.sh | bash
 \`\`\`
 
 ### Upgrade Existing Installation
 
 \`\`\`bash
-ggnmem upgrade --bundle ggnmem-linux-x86_64.tar.gz
+ggnmem self-update
+\`\`\`
+
+### Manual Install (from tarball)
+
+\`\`\`bash
+tar xzf ggnmem-linux-x86_64.tar.gz
+bash install.sh
 \`\`\`
 
 ### Verify Installation
@@ -152,3 +162,4 @@ ${CHECKSUMS_TABLE}
 EOF
 
 echo "RELEASE_NOTES.md generated for ${TAG}"
+

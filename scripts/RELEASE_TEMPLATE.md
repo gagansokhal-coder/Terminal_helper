@@ -1,5 +1,9 @@
 # ggnmem v__VERSION__
 
+## 🌐 Website
+
+**[ggnmem.mytechy.in](https://ggnmem.mytechy.in)**
+
 ## What's New
 
 <!-- Add changelog entries here before publishing -->
@@ -10,17 +14,23 @@
 
 ## Installation
 
-### Quick Install (from tarball)
+### One-Line Install
 
 ```bash
-tar xzf ggnmem-linux-__ARCH__.tar.gz
-bash install.sh
+curl -fsSL https://raw.githubusercontent.com/gagansokhal-coder/Terminal_helper/main/scripts/install-online.sh | bash
 ```
 
 ### Upgrade Existing Installation
 
 ```bash
-ggnmem upgrade --bundle ggnmem-linux-__ARCH__.tar.gz
+ggnmem self-update
+```
+
+### Manual Install (from tarball)
+
+```bash
+tar xzf ggnmem-linux-__ARCH__.tar.gz
+bash install.sh
 ```
 
 ### Verify Installation

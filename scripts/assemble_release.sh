@@ -108,26 +108,18 @@ cat > "$RELEASE_DIR/README.md" << 'EOF'
 
 A local-first, privacy-focused terminal history intelligence system.
 
+🌐 Website: https://ggnmem.mytechy.in
+
 ## Quick Install
 
 ```bash
 bash install.sh
 ```
 
-## Manual Install
+## Upgrade
 
 ```bash
-# Copy binaries
-cp ggnmem ggnmem-daemon ~/.local/bin/
-
-# Set up shell integration
-ggnmem install
-
-# Start the daemon
-ggnmem-daemon &
-
-# Verify
-ggnmem doctor
+ggnmem self-update
 ```
 
 ## Usage
@@ -148,13 +140,6 @@ ggnmem doctor
 # Show version info
 ggnmem version
 ggnmem version --verbose
-```
-
-## Upgrade
-
-```bash
-ggnmem upgrade --bundle ./path/to/release
-ggnmem upgrade --bundle ggnmem-linux-x86_64.tar.gz
 ```
 
 ## Uninstall

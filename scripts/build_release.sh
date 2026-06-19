@@ -134,26 +134,18 @@ cat > "$RELEASE_DIR/README.md" << 'EOF'
 
 A local-first, privacy-focused terminal history intelligence system.
 
+🌐 Website: https://ggnmem.mytechy.in
+
 ## Quick Install
 
 ```bash
 bash install.sh
 ```
 
-## Manual Install
+## Upgrade
 
 ```bash
-# Copy binaries
-cp ggnmem ggnmem-daemon ~/.local/bin/
-
-# Set up shell integration
-ggnmem install
-
-# Start the daemon
-ggnmem-daemon &
-
-# Verify
-ggnmem doctor
+ggnmem self-update
 ```
 
 ## Usage
@@ -174,16 +166,6 @@ ggnmem doctor
 # Show version info
 ggnmem version
 ggnmem version --verbose
-```
-
-## Upgrade
-
-```bash
-# From a new release bundle
-ggnmem upgrade --bundle ./path/to/release
-
-# Or from an extracted tarball
-ggnmem upgrade --bundle ggnmem-linux-x86_64.tar.gz
 ```
 
 ## Uninstall
@@ -279,23 +261,33 @@ DAEMON_SIZE=$(du -h "$RELEASE_DIR/ggnmem-daemon" | cut -f1)
 cat > "$PROJECT_ROOT/RELEASE_NOTES.md" <<EOF
 # ggnmem v${VERSION}
 
+## 🌐 Website
+
+**[ggnmem.mytechy.in](https://ggnmem.mytechy.in)**
+
 ## What's New
 
 <!-- Add changelog entries here before publishing -->
 
 ## Installation
 
-### Quick Install (from tarball)
+### One-Line Install
 
 \`\`\`bash
-tar xzf ${TARBALL_NAME}
-bash install.sh
+curl -fsSL https://raw.githubusercontent.com/gagansokhal-coder/Terminal_helper/main/scripts/install-online.sh | bash
 \`\`\`
 
 ### Upgrade Existing Installation
 
 \`\`\`bash
-ggnmem upgrade --bundle ${TARBALL_NAME}
+ggnmem self-update
+\`\`\`
+
+### Manual Install (from tarball)
+
+\`\`\`bash
+tar xzf ${TARBALL_NAME}
+bash install.sh
 \`\`\`
 
 ## Checksums
@@ -384,9 +376,15 @@ echo "    1. $TARBALL_NAME"
 echo "    2. checksums.txt"
 echo "    3. RELEASE_NOTES.md"
 echo ""
-echo "  To install:"
+echo "  To install (one-line):"
+echo "    curl -fsSL https://raw.githubusercontent.com/gagansokhal-coder/Terminal_helper/main/scripts/install-online.sh | bash"
+echo ""
+echo "  To install (from tarball):"
 echo "    cd release && bash install.sh"
 echo ""
-echo "  To distribute:"
-echo "    Share $TARBALL_NAME"
+echo "  To upgrade:"
+echo "    ggnmem self-update"
+echo ""
+echo "  Website:"
+echo "    https://ggnmem.mytechy.in"
 echo ""

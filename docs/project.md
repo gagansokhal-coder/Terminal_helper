@@ -103,6 +103,7 @@ When acting on this repository, execute tasks in the following sequence unless o
 14. **Phase 23: Installer & Distribution.** Build `install-online.sh` to provide frictionless one-line installation, dynamic GitHub release discovery, checksum validation, and rollback-protected extraction.
 15. **Phase 24: Documentation.** Create README, INSTALL.md, visual assets, and update all architectural files to reflect the final project state.
 16. **Phase 25: Landing Page.** Build the modern, Next.js static landing page for `ggnmem` with SEO, screenshots, and vercel deployment configuration.
+17. **Phase 25.1: Release Workflow Modernization.** Update automated GitHub release pipeline to advertise new primary install/upgrade workflows (website, online installer, self-update).
 
 **END OF SYSTEM DIRECTIVES.** Proceed with generating the required workspace architecture.
 
