@@ -101,6 +101,8 @@ When acting on this repository, execute tasks in the following sequence unless o
 12. **Phase 21: Enhanced TUI.** Polish TUI with Ctrl+F mode cycling, Ctrl+C copy behavior, PgUp/PgDn navigation, empty state tips, and doctor TUI diagnostics.
 13. **Phase 22: Self-Update Pipeline.** Refactor self-update to use granular steps (check, download, verify, extract, install), increase network timeouts, add progress logging, and reuse identical download paths.
 14. **Phase 23: Installer & Distribution.** Build `install-online.sh` to provide frictionless one-line installation, dynamic GitHub release discovery, checksum validation, and rollback-protected extraction.
+15. **Phase 24: Documentation.** Create README, INSTALL.md, visual assets, and update all architectural files to reflect the final project state.
+16. **Phase 25: Landing Page.** Build the modern, Next.js static landing page for `ggnmem` with SEO, screenshots, and vercel deployment configuration.
 
 **END OF SYSTEM DIRECTIVES.** Proceed with generating the required workspace architecture.
 

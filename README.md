@@ -151,7 +151,7 @@ Built on a strict **local-first philosophy**:
 
 **Current Status:** Linux MVP complete with full shell capture, hybrid search, interactive TUI, and AI embeddings.
 
-**Phase 24+ Focus:**
+**Phase 26+ Focus:**
 *   Windows PowerShell native support
 *   Ghost-text autosuggestions
 *   Fish and Nushell hook integrations

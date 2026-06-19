@@ -41,7 +41,7 @@
 * **Content:** Reiterate the local-first philosophy. Highlight zero network requests, secret redaction, and strict local data storage.
 
 ## 12. Roadmap
-* **Content:** A snapshot of future plans (e.g., Phase 24+ goals). Mention upcoming features like Windows PowerShell support and ghost-text autosuggestions. Provide a link to the full roadmap document.
+* **Content:** A snapshot of future plans (e.g., Phase 26+ goals). Mention upcoming features like Windows PowerShell support and ghost-text autosuggestions. Provide a link to the full roadmap document.
 
 ## 13. Contributing
 * **Content:** Guidelines for developers who want to contribute. Mention formatting (`cargo fmt`), linting (`cargo clippy`), and testing requirements.

@@ -332,6 +332,37 @@ Milestone:
 
 - Users can install `ggnmem` securely via a single `curl | bash` command without manual version hunting.
 
+### Phase 24 — Documentation (Completed)
+
+Goal: provide high-quality documentation for users and contributors.
+
+Deliverables:
+
+- Comprehensive README.md with features, architecture, and quickstart.
+- INSTALL.md with detailed platform-specific installation steps.
+- Visual assets (screenshots/GIFs) showing core features.
+- Architecture and design documents updated.
+
+Milestone:
+
+- The project is fully documented and ready for early public adoption.
+
+### Phase 25 — Landing Page (Completed)
+
+Goal: create a modern, SEO-friendly landing page for ggnmem.
+
+Deliverables:
+
+- Next.js + TypeScript static website.
+- Dark theme, modern glassmorphism design.
+- Sections for Hero, Features, Screenshots, How It Works, Quick Start, Examples, Stats, and Roadmap.
+- Full SEO metadata, OpenGraph, sitemap.xml, and robots.txt.
+- Vercel deployment configuration.
+
+Milestone:
+
+- The project has a professional online presence at `ggnmem.mytechy.in`.
+
 ## Linux-First Rollout
 
 Linux is the first supported platform because it exercises the core architecture with less platform-specific risk than Windows.
