@@ -76,6 +76,14 @@ for arch in x86_64 aarch64; do
     fi
 done
 
+# Include Windows ZIP if present
+WIN_ZIP="ggnmem-windows-x86_64.zip"
+if [ -f "$DIST_DIR/$WIN_ZIP" ]; then
+    SIZE=$(du -h "$DIST_DIR/$WIN_ZIP" | cut -f1)
+    DOWNLOAD_TABLE="${DOWNLOAD_TABLE}| \`${WIN_ZIP}\` | ${SIZE} |
+"
+fi
+
 # ─── Build changelog from commits since last tag ───────────────────────────
 
 CHANGELOG=""
@@ -103,10 +111,16 @@ ${CHANGELOG}
 
 ## Installation
 
-### One-Line Install
+### Linux / WSL — One-Line Install
 
 \`\`\`bash
 curl -fsSL https://raw.githubusercontent.com/gagansokhal-coder/Terminal_helper/main/scripts/install-online.sh | bash
+\`\`\`
+
+### Windows — One-Line Install
+
+\`\`\`powershell
+irm https://ggnmem.mytechy.in/install.ps1 | iex
 \`\`\`
 
 ### Upgrade Existing Installation
@@ -150,16 +164,16 @@ ${CHECKSUMS_TABLE}
 
 ## Requirements
 
-- Linux (x86_64 or aarch64) or WSL
+- **Linux:** x86_64 or aarch64 (or WSL)
+- **Windows:** x86_64, PowerShell 5.1+
 - No Rust toolchain required (pre-built binaries)
 - ~100 MB disk space (with AI model)
 
 ## Preserved During Upgrade
 
-- \`~/.config/ggnmem/config.toml\` — configuration
-- \`~/.local/share/ggnmem/ggnmem.db\` — command history database
-- \`~/.local/share/ggnmem/models/\` — installed AI models
+- Configuration: \`~/.config/ggnmem/config.toml\` (Linux) / \`%APPDATA%\\ggnmem\\config.toml\` (Windows)
+- Database: \`~/.local/share/ggnmem/ggnmem.db\` (Linux) / \`%LOCALAPPDATA%\\ggnmem\\data\\ggnmem.db\` (Windows)
+- AI models: \`~/.local/share/ggnmem/models/\` (Linux) / \`%LOCALAPPDATA%\\ggnmem\\models\\\` (Windows)
 EOF
 
 echo "RELEASE_NOTES.md generated for ${TAG}"
-
