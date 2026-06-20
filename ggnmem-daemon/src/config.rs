@@ -229,9 +229,14 @@ fn default_database_path() -> DaemonResult<PathBuf> {
 
     #[cfg(windows)]
     {
-        let app_data = env::var_os("APPDATA")
+        let local_app_data = env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
-            .ok_or_else(|| DaemonError::InvalidConfig("APPDATA is not set".to_owned()))?;
-        Ok(app_data.join("ggnmem").join(DATABASE_FILE_NAME))
+            .ok_or_else(|| {
+                DaemonError::InvalidConfig("LOCALAPPDATA is not set".to_owned())
+            })?;
+        Ok(local_app_data
+            .join("ggnmem")
+            .join("data")
+            .join(DATABASE_FILE_NAME))
     }
 }
