@@ -205,8 +205,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: build-windows-x86_64-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: build-windows-x86_64-
+          key: build-windows-x86_64-v2-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: build-windows-x86_64-v2-
 
       - name: Build release binaries
         run: cargo build --release --target x86_64-pc-windows-msvc

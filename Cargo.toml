@@ -16,7 +16,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ggnmem/ggnmem"
 rust-version = "1.76"
-version = "0.3.11-alpha"
+version = "0.3.9-alpha"
 
 [workspace.dependencies]
 anyhow = "1.0"
