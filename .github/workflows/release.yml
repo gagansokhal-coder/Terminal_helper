@@ -184,6 +184,8 @@ jobs:
     name: Build Windows (x86_64)
     needs: gate
     runs-on: windows-latest
+    env:
+      RUSTFLAGS: "-C target-feature=-crt-static"
 
     steps:
       - name: Checkout
