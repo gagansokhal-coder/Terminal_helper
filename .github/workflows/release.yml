@@ -184,10 +184,9 @@ jobs:
     name: Build Windows (x86_64)
     needs: gate
     runs-on: windows-latest
-    env:
-      # Force dynamic CRT and exclude static CRT libs to fix LNK1169/LNK2005
-      # conflict between ort (dynamic CRT) and rusqlite/tokenizers (static CRT).
-      RUSTFLAGS: "-C target-feature=-crt-static -C link-arg=/NODEFAULTLIB:libcmt -C link-arg=/NODEFAULTLIB:libcpmt"
+    # NOTE: CRT linkage is controlled by .cargo/config.toml (target-feature=-crt-static).
+    # Do NOT set RUSTFLAGS here — it overrides the config file and breaks propagation
+    # of target features to build scripts (cc crate).
 
     steps:
       - name: Checkout

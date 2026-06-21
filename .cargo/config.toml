@@ -1,6 +1,9 @@
+# Force dynamic CRT (/MD) on Windows MSVC.
+# Required because `ort` (ONNX Runtime) is prebuilt with /MD (dynamic CRT).
+# Without this, `cc`-compiled deps (esaxx-rs, libsqlite3-sys) default to
+# /MT (static CRT), causing LNK2038 RuntimeLibrary mismatch.
+#
+# See: https://ort.pyke.io/setup/linking
+
 [target.x86_64-pc-windows-msvc]
-rustflags = [
-    "-C", "target-feature=-crt-static",
-    "-C", "link-arg=/NODEFAULTLIB:libcmt",
-    "-C", "link-arg=/NODEFAULTLIB:libcpmt"
-]
+rustflags = ["-C", "target-feature=-crt-static"]
