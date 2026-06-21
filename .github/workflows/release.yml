@@ -339,7 +339,7 @@ jobs:
 
           # Verify VERSION file
           if [ -f verify-windows/VERSION ]; then
-            FILE_VERSION=$(grep '^version=' verify-windows/VERSION | cut -d= -f2)
+            FILE_VERSION=$(grep '^version=' verify-windows/VERSION | cut -d= -f2 | tr -d '\r')
             echo "Windows VERSION file: $FILE_VERSION"
 
             if [ "$FILE_VERSION" != "$TAG_VERSION" ]; then
@@ -347,7 +347,7 @@ jobs:
               exit 1
             fi
 
-            PLATFORM=$(grep '^platform=' verify-windows/VERSION | cut -d= -f2)
+            PLATFORM=$(grep '^platform=' verify-windows/VERSION | cut -d= -f2 | tr -d '\r')
             if [ "$PLATFORM" != "windows" ]; then
               echo "::error::Windows VERSION file has wrong platform: '$PLATFORM'"
               exit 1
