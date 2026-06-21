@@ -1,7 +1,8 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # assemble_release_windows.ps1 — Package Windows binaries into a release ZIP
 #
-# Called by the release workflow after `cargo build --release --target x86_64-pc-windows-msvc`.
+# Called by the release workflow after `cargo build --release`.
+# Supports both x86_64-pc-windows-msvc and x86_64-pc-windows-gnu targets.
 # Produces: ggnmem-windows-x86_64.zip in the project root.
 #
 # Usage:
