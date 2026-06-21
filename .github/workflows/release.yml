@@ -184,6 +184,10 @@ jobs:
     name: Build Windows (x86_64)
     needs: gate
     runs-on: windows-latest
+    env:
+      # Force dynamic CRT and exclude static CRT libs to fix LNK1169/LNK2005
+      # conflict between ort (dynamic CRT) and rusqlite/tokenizers (static CRT).
+      RUSTFLAGS: "-C target-feature=-crt-static -C link-arg=/NODEFAULTLIB:libcmt -C link-arg=/NODEFAULTLIB:libcpmt"
 
     steps:
       - name: Checkout
@@ -191,23 +195,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Rust (GNU toolchain)
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-gnu
+          targets: x86_64-pc-windows-msvc
 
-      - name: Cache cargo registry & build
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: build-windows-gnu-x86_64-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: build-windows-gnu-x86_64-
+      - name: Clean build artifacts
+        run: cargo clean
 
       - name: Build release binaries
-        run: cargo build --release --target x86_64-pc-windows-gnu
+        run: cargo build --release --target x86_64-pc-windows-msvc
 
       - name: Extract version from tag
         id: meta
@@ -229,7 +226,7 @@ jobs:
         shell: pwsh
         run: |
           pwsh scripts/assemble_release_windows.ps1 `
-            -Target  "x86_64-pc-windows-gnu" `
+            -Target  "x86_64-pc-windows-msvc" `
             -Arch    "x86_64" `
             -Version "${{ steps.meta.outputs.version }}" `
             -Commit  "${{ steps.meta.outputs.commit }}" `
