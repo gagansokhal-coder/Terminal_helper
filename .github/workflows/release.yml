@@ -184,9 +184,15 @@ jobs:
     name: Build Windows (x86_64)
     needs: gate
     runs-on: windows-latest
-    # NOTE: CRT linkage is controlled by .cargo/config.toml (target-feature=-crt-static).
-    # Do NOT set RUSTFLAGS here — it overrides the config file and breaks propagation
-    # of target features to build scripts (cc crate).
+    env:
+      # ONNX Runtime (ort-sys) is prebuilt with /MD (dynamic CRT).
+      # CARGO_CFG_TARGET_FEATURE does NOT reflect -C target-feature changes
+      # from rustflags (Cargo limitation), so the cc crate defaults to /MT
+      # for esaxx-rs and libsqlite3-sys, causing LNK2038 mismatch.
+      # Fix: force /MD via CFLAGS/CXXFLAGS (cc crate appends these AFTER
+      # its own flags; MSVC uses the last specified runtime flag).
+      CFLAGS: "/MD"
+      CXXFLAGS: "/MD"
 
     steps:
       - name: Checkout

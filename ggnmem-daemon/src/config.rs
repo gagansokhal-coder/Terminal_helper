@@ -1,7 +1,10 @@
 use std::{
     env,
-    path::{Path, PathBuf},
+    path::{PathBuf},
 };
+
+#[cfg(unix)]
+use std::path::Path;
 
 use crate::{
     error::{DaemonError, DaemonResult},
@@ -15,6 +18,7 @@ const DEFAULT_MAX_LOG_SIZE_BYTES: u64 = 5 * 1024 * 1024;
 const DEFAULT_CLEANUP_INTERVAL_SECS: u64 = 86400; // 24 hours
 const DEFAULT_RETENTION_DAYS: u32 = 365;
 const DEFAULT_MAX_COMMANDS: u64 = 1_000_000;
+#[cfg(unix)]
 const SOCKET_FILE_NAME: &str = "daemon.sock";
 const DATABASE_FILE_NAME: &str = "ggnmem.db";
 
