@@ -14,14 +14,23 @@ Complete installation guide for **ggnmem** — the Semantic Terminal Memory Engi
 | Linux | aarch64 (ARM64) | ✅ Supported |
 | WSL | x86_64 | ✅ Supported |
 | WSL | aarch64 | ✅ Supported |
-| Windows | — | 🔜 Planned |
+| Windows | x86_64 | ✅ Supported |
 
 ### Prerequisites
+
+**Linux / WSL:**
 
 - **Bash** or **Zsh** shell
 - `curl` (for the one-line installer)
 - No build tools or Rust toolchain required for pre-built releases
 - ~100 MB disk space (with AI model)
+
+**Windows:**
+
+- **PowerShell** 5.1 or later (built into Windows 10+)
+- Internet connection (for downloading release from GitHub)
+- ~100 MB disk space (with AI model)
+
 
 ---
 
@@ -48,6 +57,67 @@ The bootstrap script performs the following steps automatically:
 9. **Cleans up** — removes temporary files from `/tmp`
 
 > **Upgrading?** Running the installer on an existing installation performs a safe in-place upgrade. Your configuration, database, and AI models are preserved.
+
+---
+
+## Windows Installation
+
+Install ggnmem on Windows natively with PowerShell:
+
+```powershell
+irm https://ggnmem.mytechy.in/install.ps1 | iex
+```
+
+### What happens internally
+
+The PowerShell installer performs the following steps automatically:
+
+1. **Detects your environment** — verifies Windows, PowerShell version, and architecture
+2. **Fetches the latest release** — queries the GitHub API for the newest release
+3. **Downloads the release ZIP** — fetches `ggnmem-windows-x86_64.zip` and `checksums.txt`
+4. **Verifies SHA256 checksum** — validates integrity before extraction
+5. **Extracts the bundle** — unpacks binaries to a temporary staging directory
+6. **Stops existing daemon** — if upgrading, safely stops the running daemon
+7. **Backs up existing binaries** — creates `.old` backups before replacing
+8. **Installs binaries** — copies `ggnmem.exe` and `ggnmem-daemon.exe` to `%LOCALAPPDATA%\ggnmem\bin\`
+9. **Configures PATH** — adds the bin directory to User PATH
+10. **Creates configuration** — generates a default `config.toml` at `%APPDATA%\ggnmem\`
+11. **Starts daemon** — launches the background daemon
+12. **Verifies installation** — runs `ggnmem version` and `ggnmem doctor`
+13. **Cleans up** — removes temporary files
+
+### Windows Directory Layout
+
+| Path | Purpose |
+|------|---------|
+| `%LOCALAPPDATA%\ggnmem\bin\ggnmem.exe` | CLI binary |
+| `%LOCALAPPDATA%\ggnmem\bin\ggnmem-daemon.exe` | Background daemon |
+| `%LOCALAPPDATA%\ggnmem\data\ggnmem.db` | Command database |
+| `%LOCALAPPDATA%\ggnmem\models\` | AI embedding models |
+| `%LOCALAPPDATA%\ggnmem\logs\` | Runtime & install logs |
+| `%LOCALAPPDATA%\ggnmem\VERSION` | Installed version metadata |
+| `%APPDATA%\ggnmem\config.toml` | Configuration |
+
+### Upgrade Behavior
+
+Running the installer on an existing installation:
+
+1. Stops the running daemon
+2. Backs up existing binaries (`.old` suffix)
+3. Replaces binaries with the new version
+4. Preserves database, models, and configuration
+5. Restarts the daemon
+6. Verifies the new installation
+
+### Rollback
+
+If installation fails mid-flight:
+
+- Previous binaries are automatically restored from backups
+- User data (database, config, models) is never modified
+- Recovery instructions are printed
+
+> **Upgrading?** Your configuration, database, and AI models are always preserved during upgrades. The installer creates backups and rolls back automatically if anything goes wrong.
 
 ---
 
