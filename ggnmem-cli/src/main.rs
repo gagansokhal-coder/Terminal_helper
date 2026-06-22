@@ -544,22 +544,11 @@ async fn doctor() -> Result<()> {
     println!("version         ... {}", env!("CARGO_PKG_VERSION"));
 
     // Binary install — platform-aware paths.
+    let bin_dir = ggnmem_paths::bin_dir().unwrap_or_else(|| PathBuf::from("bin"));
     #[cfg(windows)]
-    let (bin_dir, cli_bin_name, daemon_bin_name) = {
-        let local_app_data = std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("C:\\"));
-        let bin = local_app_data.join("ggnmem").join("bin");
-        (bin, "ggnmem.exe", "ggnmem-daemon.exe")
-    };
+    let (cli_bin_name, daemon_bin_name) = ("ggnmem.exe", "ggnmem-daemon.exe");
     #[cfg(unix)]
-    let (bin_dir, cli_bin_name, daemon_bin_name) = {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("~"));
-        let bin = home.join(".local").join("bin");
-        (bin, "ggnmem", "ggnmem-daemon")
-    };
+    let (cli_bin_name, daemon_bin_name) = ("ggnmem", "ggnmem-daemon");
 
     let cli_bin = bin_dir.join(cli_bin_name);
     let daemon_bin = bin_dir.join(daemon_bin_name);
@@ -632,27 +621,9 @@ async fn doctor() -> Result<()> {
     }
 
     // Log file.
-    #[cfg(windows)]
-    let log_file = {
-        let local_app_data = std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("C:\\"));
-        local_app_data
-            .join("ggnmem")
-            .join("logs")
-            .join("daemon.log")
-    };
-    #[cfg(unix)]
-    let log_file = {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("~"));
-        home.join(".local")
-            .join("state")
-            .join("ggnmem")
-            .join("logs")
-            .join("daemon.log")
-    };
+    let log_file = ggnmem_paths::logs_dir()
+        .map(|dir| dir.join("daemon.log"))
+        .unwrap_or_else(|| PathBuf::from("daemon.log"));
     print!("log file        ... ");
     if log_file.exists() {
         let size = std::fs::metadata(&log_file).map(|m| m.len()).unwrap_or(0);
@@ -668,12 +639,9 @@ async fn doctor() -> Result<()> {
         println!("— no logs yet");
     }
 
-    // Shell integration (Unix only).
     #[cfg(unix)]
     let shell_found = {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("~"));
+        let home = ggnmem_paths::home_dir().unwrap_or_else(|| PathBuf::from("~"));
         print!("shell hooks     ... ");
         let bashrc = home.join(".bashrc");
         let zshrc = home.join(".zshrc");
@@ -819,9 +787,7 @@ async fn doctor() -> Result<()> {
     }
     #[cfg(unix)]
     {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("~"));
+        let home = ggnmem_paths::home_dir().unwrap_or_else(|| PathBuf::from("~"));
         let mut autostart_found = false;
         // Check systemd.
         let systemd_path = home
@@ -2888,29 +2854,9 @@ fn ai_benchmark() -> Result<()> {
 /// Windows: `%LOCALAPPDATA%\ggnmem\data\ggnmem.db`
 /// Unix:    `~/.local/share/ggnmem/ggnmem.db`
 fn default_db_path() -> PathBuf {
-    #[cfg(windows)]
-    {
-        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-            return PathBuf::from(local_app_data)
-                .join("ggnmem")
-                .join("data")
-                .join("ggnmem.db");
-        }
-    }
-
-    #[cfg(unix)]
-    {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("~"));
-        let data_home = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".local").join("share"));
-        return data_home.join("ggnmem").join("ggnmem.db");
-    }
-
-    #[allow(unreachable_code)]
-    PathBuf::from("ggnmem.db")
+    ggnmem_paths::data_dir()
+        .map(|dir| dir.join("ggnmem.db"))
+        .unwrap_or_else(|| PathBuf::from("ggnmem.db"))
 }
 
 // ─── IPC helper ──────────────────────────────────────────────────────────────

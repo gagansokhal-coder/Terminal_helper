@@ -14,6 +14,7 @@ bincode.workspace = true
 fs2.workspace = true
 ggnmem-ai = { path = "../ggnmem-ai", features = ["onnx"] }
 ggnmem-db = { path = "../ggnmem-db" }
+ggnmem-paths = { path = "../ggnmem-paths" }
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

@@ -20,22 +20,7 @@ const MAX_BACKUP_FILES: u32 = 3;
 /// Windows: `%LOCALAPPDATA%\ggnmem\logs\`
 /// Unix:    `~/.local/state/ggnmem/logs/`
 pub fn log_dir() -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .map(|dir| dir.join("ggnmem").join("logs"))
-    }
-
-    #[cfg(unix)]
-    {
-        std::env::var_os("HOME").map(PathBuf::from).map(|home| {
-            home.join(".local")
-                .join("state")
-                .join("ggnmem")
-                .join("logs")
-        })
-    }
+    ggnmem_paths::logs_dir()
 }
 
 /// Resolve the primary log file path.

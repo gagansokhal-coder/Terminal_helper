@@ -18,53 +18,12 @@ use anyhow::{bail, Context, Result};
 
 // ─── Path helpers ────────────────────────────────────────────────────────────
 
-fn home_dir() -> Result<PathBuf> {
-    #[cfg(windows)]
-    {
-        std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .context("LOCALAPPDATA is not set")
-    }
-
-    #[cfg(unix)]
-    {
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .context("HOME is not set")
-    }
-}
-
 fn bin_dir() -> Result<PathBuf> {
-    #[cfg(windows)]
-    {
-        Ok(home_dir()?.join("ggnmem").join("bin"))
-    }
-
-    #[cfg(unix)]
-    {
-        Ok(home_dir()?.join(".local").join("bin"))
-    }
+    ggnmem_paths::bin_dir().context("Could not resolve bin directory")
 }
 
 fn models_dir() -> Result<PathBuf> {
-    #[cfg(windows)]
-    {
-        Ok(home_dir()?.join("ggnmem").join("ai").join("models"))
-    }
-
-    #[cfg(unix)]
-    {
-        let data_home = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                std::env::var_os("HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or_default()
-                    .join(".local")
-                    .join("share")
-            });
-        Ok(data_home.join("ggnmem").join("models"))
-    }
+    ggnmem_paths::models_dir().context("Could not resolve models directory")
 }
 
 /// Binary name constant with .exe suffix on Windows.

@@ -16,6 +16,7 @@ ggnmem-ai = { path = "../ggnmem-ai", features = ["onnx"] }
 ggnmem-daemon = { path = "../ggnmem-daemon" }
 ggnmem-db = { path = "../ggnmem-db" }
 ggnmem-knowledge = { path = "../ggnmem-knowledge" }
+ggnmem-paths = { path = "../ggnmem-paths" }
 ratatui.workspace = true
 serde.workspace = true
 serde_json.workspace = true

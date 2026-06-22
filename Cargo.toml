@@ -6,6 +6,7 @@ members = [
     "ggnmem-db",
     "ggnmem-knowledge",
     "ggnmem-model",
+    "ggnmem-paths",
     "ggnmem-pty",
 ]
 resolver = "2"

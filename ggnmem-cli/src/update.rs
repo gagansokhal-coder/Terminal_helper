@@ -347,18 +347,7 @@ fn perform_install(
 
     println!("\nBacking up binaries...");
 
-    #[cfg(windows)]
-    let bin_dir = {
-        let local_app_data = std::env::var("LOCALAPPDATA").context("LOCALAPPDATA not set")?;
-        std::path::PathBuf::from(local_app_data)
-            .join("ggnmem")
-            .join("bin")
-    };
-    #[cfg(unix)]
-    let bin_dir = {
-        let home = std::env::var("HOME").context("HOME not set")?;
-        std::path::PathBuf::from(home).join(".local/bin")
-    };
+    let bin_dir = ggnmem_paths::bin_dir().context("Could not resolve bin directory")?;
 
     #[cfg(windows)]
     let (cli_name, daemon_name) = ("ggnmem.exe", "ggnmem-daemon.exe");

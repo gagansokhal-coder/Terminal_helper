@@ -24,21 +24,7 @@ const DAEMON_BIN_NAME: &str = "ggnmem-daemon.exe";
 const DAEMON_BIN_NAME: &str = "ggnmem-daemon";
 
 fn state_dir() -> Result<PathBuf> {
-    #[cfg(windows)]
-    {
-        let local_app_data = std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .context("LOCALAPPDATA is not set")?;
-        Ok(local_app_data.join("ggnmem"))
-    }
-
-    #[cfg(unix)]
-    {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .context("HOME is not set")?;
-        Ok(home.join(".local").join("state").join("ggnmem"))
-    }
+    ggnmem_paths::state_dir().context("Could not resolve state directory")
 }
 
 fn pid_path() -> Result<PathBuf> {
@@ -46,7 +32,7 @@ fn pid_path() -> Result<PathBuf> {
 }
 
 fn log_dir() -> Result<PathBuf> {
-    Ok(state_dir()?.join("logs"))
+    ggnmem_paths::logs_dir().context("Could not resolve logs directory")
 }
 
 fn log_path() -> Result<PathBuf> {
@@ -79,29 +65,10 @@ fn daemon_binary() -> String {
     }
 
     // Check platform-specific install location next, then fall back to PATH.
-    #[cfg(windows)]
-    {
-        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-            let win_bin = PathBuf::from(local_app_data)
-                .join("ggnmem")
-                .join("bin")
-                .join(DAEMON_BIN_NAME);
-            if win_bin.exists() {
-                return win_bin.to_string_lossy().into_owned();
-            }
-        }
-    }
-
-    #[cfg(unix)]
-    {
-        if let Some(home) = std::env::var_os("HOME") {
-            let local_bin = PathBuf::from(home)
-                .join(".local")
-                .join("bin")
-                .join(DAEMON_BIN_NAME);
-            if local_bin.exists() {
-                return local_bin.to_string_lossy().into_owned();
-            }
+    if let Some(bin_dir) = ggnmem_paths::bin_dir() {
+        let bin_path = bin_dir.join(DAEMON_BIN_NAME);
+        if bin_path.exists() {
+            return bin_path.to_string_lossy().into_owned();
         }
     }
 

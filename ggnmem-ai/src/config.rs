@@ -52,30 +52,9 @@ impl Default for AiConfig {
 /// Windows: `%LOCALAPPDATA%\ggnmem\ai\`
 /// Unix:    `~/.local/share/ggnmem/ai/` (or `$XDG_DATA_HOME/ggnmem/ai/`)
 fn default_ai_data_dir() -> PathBuf {
-    #[cfg(windows)]
-    {
-        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-            return PathBuf::from(local_app_data).join("ggnmem").join("ai");
-        }
-    }
-
-    #[cfg(unix)]
-    {
-        if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
-            return PathBuf::from(data_home).join("ggnmem").join("ai");
-        }
-
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home)
-                .join(".local")
-                .join("share")
-                .join("ggnmem")
-                .join("ai");
-        }
-    }
-
-    // Fallback for environments without HOME / LOCALAPPDATA.
-    PathBuf::from("ggnmem-ai-data")
+    ggnmem_paths::data_dir()
+        .map(|dir| dir.join("ai"))
+        .unwrap_or_else(|| PathBuf::from("ggnmem-ai-data"))
 }
 
 #[cfg(test)]

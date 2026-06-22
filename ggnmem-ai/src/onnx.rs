@@ -233,33 +233,9 @@ mod tests {
     /// Get the default model directory for testing.
     /// Tests in this module require the model to be installed first.
     fn test_model_dir() -> PathBuf {
-        #[cfg(windows)]
-        {
-            if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-                return PathBuf::from(local_app_data)
-                    .join("ggnmem")
-                    .join("ai")
-                    .join("models")
-                    .join("all-MiniLM-L6-v2");
-            }
-        }
-        if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
-            return PathBuf::from(data_home)
-                .join("ggnmem")
-                .join("ai")
-                .join("models")
-                .join("all-MiniLM-L6-v2");
-        }
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home)
-                .join(".local")
-                .join("share")
-                .join("ggnmem")
-                .join("ai")
-                .join("models")
-                .join("all-MiniLM-L6-v2");
-        }
-        PathBuf::from("ggnmem-ai-data/models/all-MiniLM-L6-v2")
+        ggnmem_paths::models_dir()
+            .map(|dir| dir.join("all-MiniLM-L6-v2"))
+            .unwrap_or_else(|| PathBuf::from("ggnmem-ai-data/models/all-MiniLM-L6-v2"))
     }
 
     #[test]

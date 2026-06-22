@@ -519,19 +519,7 @@ pub fn doctor_history_status() {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn home_dir() -> Result<PathBuf> {
-    #[cfg(windows)]
-    {
-        std::env::var_os("USERPROFILE")
-            .map(PathBuf::from)
-            .context("USERPROFILE environment variable not set")
-    }
-
-    #[cfg(unix)]
-    {
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .context("HOME environment variable not set")
-    }
+    ggnmem_paths::home_dir().context("home directory not found")
 }
 
 fn hostname() -> String {

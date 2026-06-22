@@ -1217,21 +1217,9 @@ async fn fetch_count() -> Result<u64> {
 // ─── Shell action files ──────────────────────────────────────────────────────
 
 fn action_file(name: &str) -> Result<PathBuf> {
-    #[cfg(windows)]
-    {
-        let local_app_data = std::env::var_os("LOCALAPPDATA").context("LOCALAPPDATA is not set")?;
-        Ok(PathBuf::from(local_app_data).join("ggnmem").join(name))
-    }
-
-    #[cfg(unix)]
-    {
-        let home = std::env::var_os("HOME").context("$HOME is not set")?;
-        Ok(PathBuf::from(home)
-            .join(".local")
-            .join("state")
-            .join("ggnmem")
-            .join(name))
-    }
+    ggnmem_paths::state_dir()
+        .map(|dir| dir.join(name))
+        .context("Could not resolve state directory")
 }
 
 fn write_action_file(name: &str, cmd: &str) -> Result<()> {

@@ -11,83 +11,25 @@ use anyhow::{Context, Result};
 // ─── Directory helpers ───────────────────────────────────────────────────────
 
 fn bin_dir() -> Result<PathBuf> {
-    #[cfg(windows)]
-    {
-        let local_app_data = std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .context("LOCALAPPDATA is not set")?;
-        Ok(local_app_data.join("ggnmem").join("bin"))
-    }
-
-    #[cfg(unix)]
-    {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .context("HOME is not set")?;
-        Ok(home.join(".local").join("bin"))
-    }
+    ggnmem_paths::bin_dir().context("Could not resolve bin directory")
 }
 
 fn config_dir() -> Result<PathBuf> {
-    #[cfg(windows)]
-    {
-        let app_data = std::env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .context("APPDATA is not set")?;
-        Ok(app_data.join("ggnmem"))
-    }
-
-    #[cfg(unix)]
-    {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .context("HOME is not set")?;
-        Ok(home.join(".config").join("ggnmem"))
-    }
+    ggnmem_paths::config_dir().context("Could not resolve config directory")
 }
 
 fn data_dir() -> Result<PathBuf> {
-    #[cfg(windows)]
-    {
-        let local_app_data = std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .context("LOCALAPPDATA is not set")?;
-        Ok(local_app_data.join("ggnmem").join("data"))
-    }
-
-    #[cfg(unix)]
-    {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .context("HOME is not set")?;
-        Ok(home.join(".local").join("share").join("ggnmem"))
-    }
+    ggnmem_paths::data_dir().context("Could not resolve data directory")
 }
 
 fn state_dir() -> Result<PathBuf> {
-    #[cfg(windows)]
-    {
-        let local_app_data = std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .context("LOCALAPPDATA is not set")?;
-        Ok(local_app_data.join("ggnmem"))
-    }
-
-    #[cfg(unix)]
-    {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .context("HOME is not set")?;
-        Ok(home.join(".local").join("state").join("ggnmem"))
-    }
+    ggnmem_paths::state_dir().context("Could not resolve state directory")
 }
 
 /// Home directory — only used for Unix shell rc file paths.
 #[cfg(unix)]
 fn home_dir() -> Result<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME is not set")
+    ggnmem_paths::home_dir().context("HOME is not set")
 }
 
 // ─── Default config ──────────────────────────────────────────────────────────

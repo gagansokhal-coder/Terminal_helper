@@ -160,25 +160,8 @@ fn parse_env_bool(name: &str, default: bool) -> bool {
 }
 
 fn default_log_dir() -> DaemonResult<PathBuf> {
-    #[cfg(windows)]
-    {
-        let local_app_data = env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .ok_or_else(|| DaemonError::InvalidConfig("LOCALAPPDATA is not set".to_owned()))?;
-        Ok(local_app_data.join("ggnmem").join("logs"))
-    }
-
-    #[cfg(unix)]
-    {
-        let home = env::var_os("HOME")
-            .map(PathBuf::from)
-            .ok_or_else(|| DaemonError::InvalidConfig("HOME is not set".to_owned()))?;
-        Ok(home
-            .join(".local")
-            .join("state")
-            .join("ggnmem")
-            .join("logs"))
-    }
+    ggnmem_paths::logs_dir()
+        .ok_or_else(|| DaemonError::InvalidConfig("Could not resolve logs directory".to_owned()))
 }
 
 #[cfg(unix)]
@@ -222,32 +205,8 @@ fn default_database_path() -> DaemonResult<PathBuf> {
         return Ok(PathBuf::from(path));
     }
 
-    #[cfg(unix)]
-    {
-        if let Some(data_home) = env::var_os("XDG_DATA_HOME") {
-            return Ok(PathBuf::from(data_home)
-                .join("ggnmem")
-                .join(DATABASE_FILE_NAME));
-        }
-
-        let home = env::var_os("HOME")
-            .map(PathBuf::from)
-            .ok_or_else(|| DaemonError::InvalidConfig("HOME is not set".to_owned()))?;
-        Ok(home
-            .join(".local")
-            .join("share")
-            .join("ggnmem")
-            .join(DATABASE_FILE_NAME))
-    }
-
-    #[cfg(windows)]
-    {
-        let local_app_data = env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .ok_or_else(|| DaemonError::InvalidConfig("LOCALAPPDATA is not set".to_owned()))?;
-        Ok(local_app_data
-            .join("ggnmem")
-            .join("data")
-            .join(DATABASE_FILE_NAME))
-    }
+    let data_dir = ggnmem_paths::data_dir()
+        .ok_or_else(|| DaemonError::InvalidConfig("Could not resolve data directory".to_owned()))?;
+    
+    Ok(data_dir.join(DATABASE_FILE_NAME))
 }

@@ -354,22 +354,7 @@ pub fn database_config_for_path(path: std::path::PathBuf) -> DatabaseConfig {
 /// Windows: `%LOCALAPPDATA%\ggnmem\daemon.pid`
 /// Unix:    `~/.local/state/ggnmem/daemon.pid`
 fn state_pid_path() -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .map(|dir| dir.join("ggnmem").join("daemon.pid"))
-    }
-
-    #[cfg(unix)]
-    {
-        std::env::var_os("HOME").map(PathBuf::from).map(|home| {
-            home.join(".local")
-                .join("state")
-                .join("ggnmem")
-                .join("daemon.pid")
-        })
-    }
+    ggnmem_paths::state_dir().map(|dir| dir.join("daemon.pid"))
 }
 
 /// Acquire an exclusive advisory lock on the PID file.
