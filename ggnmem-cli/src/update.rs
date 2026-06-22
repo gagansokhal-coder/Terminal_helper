@@ -701,7 +701,10 @@ mod tests {
             select_asset(&assets, "linux-aarch64").unwrap().name,
             "ggnmem-linux-aarch64.tar.gz"
         );
-        assert!(select_asset(&assets, "windows-x86_64").is_none());
+        assert_eq!(
+            select_asset(&assets, "windows-x86_64").unwrap().name,
+            "ggnmem-windows-x86_64.zip"
+        );
     }
 
     #[test]
