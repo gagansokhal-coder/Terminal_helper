@@ -17,14 +17,28 @@ use anyhow::{bail, Context, Result};
 
 // ─── Path helpers ────────────────────────────────────────────────────────────
 
-fn home_dir() -> Result<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME is not set")
-}
+/// Daemon binary name (with .exe suffix on Windows).
+#[cfg(windows)]
+const DAEMON_BIN_NAME: &str = "ggnmem-daemon.exe";
+#[cfg(unix)]
+const DAEMON_BIN_NAME: &str = "ggnmem-daemon";
 
 fn state_dir() -> Result<PathBuf> {
-    Ok(home_dir()?.join(".local").join("state").join("ggnmem"))
+    #[cfg(windows)]
+    {
+        let local_app_data = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .context("LOCALAPPDATA is not set")?;
+        Ok(local_app_data.join("ggnmem"))
+    }
+
+    #[cfg(unix)]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .context("HOME is not set")?;
+        Ok(home.join(".local").join("state").join("ggnmem"))
+    }
 }
 
 fn pid_path() -> Result<PathBuf> {
@@ -40,9 +54,16 @@ fn log_path() -> Result<PathBuf> {
 }
 
 fn socket_path() -> Option<PathBuf> {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .map(|dir| dir.join("ggnmem").join("daemon.sock"))
+    #[cfg(unix)]
+    {
+        std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .map(|dir| dir.join("ggnmem").join("daemon.sock"))
+    }
+    #[cfg(windows)]
+    {
+        None // Windows uses named pipes, not socket files.
+    }
 }
 
 fn daemon_binary() -> String {
@@ -50,21 +71,35 @@ fn daemon_binary() -> String {
     // bincode IPC structs aligned when multiple ggnmem installs are on PATH.
     if let Ok(current_exe) = std::env::current_exe() {
         if let Some(bin_dir) = current_exe.parent() {
-            let sibling = bin_dir.join("ggnmem-daemon");
+            let sibling = bin_dir.join(DAEMON_BIN_NAME);
             if sibling.exists() {
                 return sibling.to_string_lossy().into_owned();
             }
         }
     }
 
-    // Check ~/.local/bin next, then fall back to PATH.
-    if let Ok(home) = home_dir() {
-        let local_bin = home.join(".local").join("bin").join("ggnmem-daemon");
-        if local_bin.exists() {
-            return local_bin.to_string_lossy().into_owned();
+    // Check platform-specific install location next, then fall back to PATH.
+    #[cfg(windows)]
+    {
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+            let win_bin = PathBuf::from(local_app_data).join("ggnmem").join("bin").join(DAEMON_BIN_NAME);
+            if win_bin.exists() {
+                return win_bin.to_string_lossy().into_owned();
+            }
         }
     }
-    "ggnmem-daemon".to_owned()
+
+    #[cfg(unix)]
+    {
+        if let Some(home) = std::env::var_os("HOME") {
+            let local_bin = PathBuf::from(home).join(".local").join("bin").join(DAEMON_BIN_NAME);
+            if local_bin.exists() {
+                return local_bin.to_string_lossy().into_owned();
+            }
+        }
+    }
+
+    DAEMON_BIN_NAME.to_owned()
 }
 
 // ─── PID management ──────────────────────────────────────────────────────────
@@ -331,11 +366,20 @@ pub fn cmd_stop() -> Result<()> {
                 return Ok(());
             }
 
-            // Send SIGTERM via kill command (safe, no unsafe code).
+            // Terminate the daemon process (platform-specific).
+            #[cfg(unix)]
             let status = Command::new("kill")
                 .arg(pid.to_string())
                 .status()
                 .context("send SIGTERM to daemon")?;
+
+            #[cfg(windows)]
+            let status = Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/F"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .context("taskkill daemon")?;
 
             if status.success() {
                 // Wait briefly for the process to exit.
@@ -357,7 +401,10 @@ pub fn cmd_stop() -> Result<()> {
                 println!("  ✓ daemon stopped (PID {pid})");
             } else {
                 println!("  ✗ failed to stop daemon (PID {pid})");
+                #[cfg(unix)]
                 println!("    try: kill -9 {pid}");
+                #[cfg(windows)]
+                println!("    try: taskkill /PID {pid} /F");
             }
             Ok(())
         }
@@ -444,8 +491,17 @@ pub fn daemon_status() -> Result<(bool, Option<u32>)> {
     }
 }
 
-// ─── Autostart ───────────────────────────────────────────────────────────────
+// ─── Autostart ─────────────────────────────────────────────────────────────
 
+/// Home directory for Unix-only features (shell rc files, systemd).
+#[cfg(unix)]
+fn home_dir() -> Result<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("HOME is not set")
+}──
+
+#[cfg(unix)]
 const SYSTEMD_SERVICE: &str = r#"[Unit]
 Description=ggnmem background daemon
 Documentation=https://github.com/ggnmem/ggnmem
@@ -469,9 +525,12 @@ StandardError=append:%h/.local/state/ggnmem/logs/daemon.log
 WantedBy=default.target
 "#;
 
+#[cfg(unix)]
 const AUTOSTART_MARKER: &str = "# ggnmem daemon autostart";
+#[cfg(unix)]
 const AUTOSTART_MARKER_END: &str = "# end ggnmem daemon autostart";
 
+#[cfg(unix)]
 fn systemd_service_path() -> Result<PathBuf> {
     Ok(home_dir()?
         .join(".config")
@@ -480,6 +539,7 @@ fn systemd_service_path() -> Result<PathBuf> {
         .join("ggnmem-daemon.service"))
 }
 
+#[cfg(unix)]
 fn has_systemd() -> bool {
     // Check if systemctl --user is available.
     // Note: is-system-running can return non-zero on degraded systems,
@@ -493,25 +553,44 @@ fn has_systemd() -> bool {
 }
 
 pub fn cmd_autostart_enable() -> Result<()> {
-    // Ensure log directory exists before enabling autostart.
-    let logs = log_dir()?;
-    fs::create_dir_all(&logs).with_context(|| format!("create log dir: {}", logs.display()))?;
-
-    if has_systemd() {
-        enable_systemd()?;
-    } else {
-        enable_shell_fallback()?;
+    #[cfg(windows)]
+    {
+        println!("  autostart is not yet supported on Windows.");
+        println!("  start the daemon manually with: ggnmem start");
+        return Ok(());
     }
-    Ok(())
+
+    #[cfg(unix)]
+    {
+        // Ensure log directory exists before enabling autostart.
+        let logs = log_dir()?;
+        fs::create_dir_all(&logs).with_context(|| format!("create log dir: {}", logs.display()))?;
+
+        if has_systemd() {
+            enable_systemd()?;
+        } else {
+            enable_shell_fallback()?;
+        }
+        Ok(())
+    }
 }
 
 pub fn cmd_autostart_disable() -> Result<()> {
-    if has_systemd() {
-        disable_systemd()?;
+    #[cfg(windows)]
+    {
+        println!("  autostart is not yet supported on Windows.");
+        return Ok(());
     }
-    // Always clean shell rc too, in case both were set.
-    disable_shell_fallback()?;
-    Ok(())
+
+    #[cfg(unix)]
+    {
+        if has_systemd() {
+            disable_systemd()?;
+        }
+        // Always clean shell rc too, in case both were set.
+        disable_shell_fallback()?;
+        Ok(())
+    }
 }
 
 /// `ggnmem autostart status` — check if autostart is configured.
@@ -519,64 +598,73 @@ pub fn cmd_autostart_status() -> Result<()> {
     println!("ggnmem autostart status");
     println!("─────────────────────────────────");
 
-    let mut found = false;
+    #[cfg(windows)]
+    {
+        println!("  autostart is not yet supported on Windows.");
+        println!("  start the daemon manually with: ggnmem start");
+    }
 
-    // Check systemd.
-    if has_systemd() {
-        let service_path = systemd_service_path()?;
-        print!("  systemd service ... ");
-        if service_path.exists() {
-            // Check if enabled.
-            let status = Command::new("systemctl")
-                .args(["--user", "is-enabled", "ggnmem-daemon.service"])
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null())
-                .output();
-            match status {
-                Ok(output) => {
+    #[cfg(unix)]
+    {
+        let mut found = false;
+
+        // Check systemd.
+        if has_systemd() {
+            let service_path = systemd_service_path()?;
+            print!("  systemd service ... ");
+            if service_path.exists() {
+                // Check if enabled.
+                let status = Command::new("systemctl")
+                    .args(["--user", "is-enabled", "ggnmem-daemon.service"])
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .output();
+                match status {
+                    Ok(output) => {
+                        let state = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                        println!("{state}");
+                        if state == "enabled" {
+                            found = true;
+                        }
+                    }
+                    Err(_) => println!("unknown"),
+                }
+
+                // Check if active.
+                let active = Command::new("systemctl")
+                    .args(["--user", "is-active", "ggnmem-daemon.service"])
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .output();
+                if let Ok(output) = active {
                     let state = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-                    println!("{state}");
-                    if state == "enabled" {
+                    println!("  service active  ... {state}");
+                }
+            } else {
+                println!("not installed");
+            }
+        } else {
+            println!("  systemd         ... not available");
+        }
+
+        // Check shell rc fallback.
+        for rc_name in &[".bashrc", ".zshrc"] {
+            let rc_path = home_dir()?.join(rc_name);
+            if rc_path.exists() {
+                if let Ok(contents) = fs::read_to_string(&rc_path) {
+                    if contents.contains(AUTOSTART_MARKER) {
+                        println!("  shell fallback  ... ✓ configured in {rc_name}");
                         found = true;
                     }
                 }
-                Err(_) => println!("unknown"),
-            }
-
-            // Check if active.
-            let active = Command::new("systemctl")
-                .args(["--user", "is-active", "ggnmem-daemon.service"])
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null())
-                .output();
-            if let Ok(output) = active {
-                let state = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-                println!("  service active  ... {state}");
-            }
-        } else {
-            println!("not installed");
-        }
-    } else {
-        println!("  systemd         ... not available");
-    }
-
-    // Check shell rc fallback.
-    for rc_name in &[".bashrc", ".zshrc"] {
-        let rc_path = home_dir()?.join(rc_name);
-        if rc_path.exists() {
-            if let Ok(contents) = fs::read_to_string(&rc_path) {
-                if contents.contains(AUTOSTART_MARKER) {
-                    println!("  shell fallback  ... ✓ configured in {rc_name}");
-                    found = true;
-                }
             }
         }
-    }
 
-    if !found {
-        println!();
-        println!("  autostart is not configured.");
-        println!("  enable with: ggnmem autostart enable");
+        if !found {
+            println!();
+            println!("  autostart is not configured.");
+            println!("  enable with: ggnmem autostart enable");
+        }
     }
 
     // Show daemon status.
@@ -595,6 +683,7 @@ pub fn cmd_autostart_status() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn enable_systemd() -> Result<()> {
     let service_path = systemd_service_path()?;
     if let Some(parent) = service_path.parent() {
@@ -630,6 +719,7 @@ fn enable_systemd() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn disable_systemd() -> Result<()> {
     // Stop first.
     let _ = Command::new("systemctl")
@@ -654,6 +744,7 @@ fn disable_systemd() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn enable_shell_fallback() -> Result<()> {
     println!("  \u{26a0} systemd not available, using shell startup fallback");
 
@@ -707,6 +798,7 @@ fn enable_shell_fallback() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn disable_shell_fallback() -> Result<()> {
     for rc_name in &[".bashrc", ".zshrc"] {
         let rc_path = home_dir()?.join(rc_name);

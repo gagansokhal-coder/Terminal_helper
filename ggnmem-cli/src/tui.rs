@@ -1217,12 +1217,23 @@ async fn fetch_count() -> Result<u64> {
 // ─── Shell action files ──────────────────────────────────────────────────────
 
 fn action_file(name: &str) -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").context("$HOME is not set")?;
-    Ok(PathBuf::from(home)
-        .join(".local")
-        .join("state")
-        .join("ggnmem")
-        .join(name))
+    #[cfg(windows)]
+    {
+        let local_app_data = std::env::var_os("LOCALAPPDATA").context("LOCALAPPDATA is not set")?;
+        Ok(PathBuf::from(local_app_data)
+            .join("ggnmem")
+            .join(name))
+    }
+
+    #[cfg(unix)]
+    {
+        let home = std::env::var_os("HOME").context("$HOME is not set")?;
+        Ok(PathBuf::from(home)
+            .join(".local")
+            .join("state")
+            .join("ggnmem")
+            .join(name))
+    }
 }
 
 fn write_action_file(name: &str, cmd: &str) -> Result<()> {

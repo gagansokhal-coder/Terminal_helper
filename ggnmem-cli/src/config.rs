@@ -209,10 +209,21 @@ impl Default for GgnmemConfig {
 // ─── Path helpers ────────────────────────────────────────────────────────────
 
 pub fn config_path() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME is not set")?;
-    Ok(home.join(".config").join("ggnmem").join("config.toml"))
+    #[cfg(windows)]
+    {
+        let app_data = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .context("APPDATA is not set")?;
+        Ok(app_data.join("ggnmem").join("config.toml"))
+    }
+
+    #[cfg(unix)]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .context("HOME is not set")?;
+        Ok(home.join(".config").join("ggnmem").join("config.toml"))
+    }
 }
 
 // ─── Load / Save ─────────────────────────────────────────────────────────────

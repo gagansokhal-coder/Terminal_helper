@@ -540,17 +540,29 @@ async fn doctor() -> Result<()> {
 
     // ── Offline checks (no daemon required) ──
 
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("~"));
-
     // Version.
     println!("version         ... {}", env!("CARGO_PKG_VERSION"));
 
-    // Binary install.
-    let bin_dir = home.join(".local").join("bin");
-    let cli_bin = bin_dir.join("ggnmem");
-    let daemon_bin = bin_dir.join("ggnmem-daemon");
+    // Binary install — platform-aware paths.
+    #[cfg(windows)]
+    let (bin_dir, cli_bin_name, daemon_bin_name) = {
+        let local_app_data = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("C:\\"));
+        let bin = local_app_data.join("ggnmem").join("bin");
+        (bin, "ggnmem.exe", "ggnmem-daemon.exe")
+    };
+    #[cfg(unix)]
+    let (bin_dir, cli_bin_name, daemon_bin_name) = {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("~"));
+        let bin = home.join(".local").join("bin");
+        (bin, "ggnmem", "ggnmem-daemon")
+    };
+
+    let cli_bin = bin_dir.join(cli_bin_name);
+    let daemon_bin = bin_dir.join(daemon_bin_name);
     print!("ggnmem binary   ... ");
     if cli_bin.exists() {
         println!("✓ {}", cli_bin.display());
@@ -565,7 +577,10 @@ async fn doctor() -> Result<()> {
     }
 
     // Config.
-    let config_file = home.join(".config").join("ggnmem").join("config.toml");
+    let config_file = match config::config_path() {
+        Ok(p) => p,
+        Err(_) => PathBuf::from("(unknown)"),
+    };
     print!("config          ... ");
     if config_file.exists() {
         println!("✓ {}", config_file.display());
@@ -600,10 +615,7 @@ async fn doctor() -> Result<()> {
     }
 
     // Database.
-    let data_home = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".local").join("share"));
-    let db_path = data_home.join("ggnmem").join("ggnmem.db");
+    let db_path = default_db_path();
     print!("database        ... ");
     if db_path.exists() {
         let size = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
@@ -620,12 +632,24 @@ async fn doctor() -> Result<()> {
     }
 
     // Log file.
-    let log_file = home
-        .join(".local")
-        .join("state")
-        .join("ggnmem")
-        .join("logs")
-        .join("daemon.log");
+    #[cfg(windows)]
+    let log_file = {
+        let local_app_data = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("C:\\"));
+        local_app_data.join("ggnmem").join("logs").join("daemon.log")
+    };
+    #[cfg(unix)]
+    let log_file = {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("~"));
+        home.join(".local")
+            .join("state")
+            .join("ggnmem")
+            .join("logs")
+            .join("daemon.log")
+    };
     print!("log file        ... ");
     if log_file.exists() {
         let size = std::fs::metadata(&log_file).map(|m| m.len()).unwrap_or(0);
@@ -641,32 +665,44 @@ async fn doctor() -> Result<()> {
         println!("— no logs yet");
     }
 
-    // Shell integration.
-    print!("shell hooks     ... ");
-    let bashrc = home.join(".bashrc");
-    let zshrc = home.join(".zshrc");
-    let mut shell_found = false;
-    if zshrc.exists() {
-        if let Ok(contents) = std::fs::read_to_string(&zshrc) {
-            if contents.contains("ggnmem init") {
-                print!("✓ zsh ");
-                shell_found = true;
+    // Shell integration (Unix only).
+    #[cfg(unix)]
+    let shell_found = {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("~"));
+        print!("shell hooks     ... ");
+        let bashrc = home.join(".bashrc");
+        let zshrc = home.join(".zshrc");
+        let mut found = false;
+        if zshrc.exists() {
+            if let Ok(contents) = std::fs::read_to_string(&zshrc) {
+                if contents.contains("ggnmem init") {
+                    print!("✓ zsh ");
+                    found = true;
+                }
             }
         }
-    }
-    if bashrc.exists() {
-        if let Ok(contents) = std::fs::read_to_string(&bashrc) {
-            if contents.contains("ggnmem init") {
-                print!("✓ bash ");
-                shell_found = true;
+        if bashrc.exists() {
+            if let Ok(contents) = std::fs::read_to_string(&bashrc) {
+                if contents.contains("ggnmem init") {
+                    print!("✓ bash ");
+                    found = true;
+                }
             }
         }
-    }
-    if shell_found {
-        println!();
-    } else {
-        println!("✗ not configured (run: ggnmem install)");
-    }
+        if found {
+            println!();
+        } else {
+            println!("✗ not configured (run: ggnmem install)");
+        }
+        found
+    };
+    #[cfg(windows)]
+    let shell_found = {
+        println!("shell hooks     ... — not applicable on Windows");
+        false
+    };
 
     // ── Online checks (daemon required) ──
 
@@ -696,7 +732,8 @@ async fn doctor() -> Result<()> {
                 );
                 println!("  platform      ... {}", status.platform);
 
-                // RAM usage from /proc/<pid>/status.
+                // RAM usage from /proc/<pid>/status (Unix only).
+                #[cfg(unix)]
                 if let Some(pid) = pid_val {
                     let proc_status = format!("/proc/{pid}/status");
                     if let Ok(contents) = std::fs::read_to_string(&proc_status) {
@@ -773,33 +810,43 @@ async fn doctor() -> Result<()> {
 
     // Autostart status.
     print!("autostart       ... ");
-    let mut autostart_found = false;
-    // Check systemd.
-    let systemd_path = home
-        .join(".config")
-        .join("systemd")
-        .join("user")
-        .join("ggnmem-daemon.service");
-    if systemd_path.exists() {
-        print!("✓ systemd ");
-        autostart_found = true;
+    #[cfg(windows)]
+    {
+        println!("— not yet supported on Windows");
     }
-    // Check shell rc.
-    for rc_name in &[".bashrc", ".zshrc"] {
-        let rc_path = home.join(rc_name);
-        if rc_path.exists() {
-            if let Ok(contents) = std::fs::read_to_string(&rc_path) {
-                if contents.contains("# ggnmem daemon autostart") {
-                    print!("✓ shell ");
-                    autostart_found = true;
+    #[cfg(unix)]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("~"));
+        let mut autostart_found = false;
+        // Check systemd.
+        let systemd_path = home
+            .join(".config")
+            .join("systemd")
+            .join("user")
+            .join("ggnmem-daemon.service");
+        if systemd_path.exists() {
+            print!("✓ systemd ");
+            autostart_found = true;
+        }
+        // Check shell rc.
+        for rc_name in &[".bashrc", ".zshrc"] {
+            let rc_path = home.join(rc_name);
+            if rc_path.exists() {
+                if let Ok(contents) = std::fs::read_to_string(&rc_path) {
+                    if contents.contains("# ggnmem daemon autostart") {
+                        print!("✓ shell ");
+                        autostart_found = true;
+                    }
                 }
             }
         }
-    }
-    if autostart_found {
-        println!();
-    } else {
-        println!("\u{2717} not configured (ggnmem autostart enable)");
+        if autostart_found {
+            println!();
+        } else {
+            println!("\u{2717} not configured (ggnmem autostart enable)");
+        }
     }
 
     // ── AI status (offline) ──
@@ -912,7 +959,10 @@ async fn doctor() -> Result<()> {
     } else if shell_found && !tui_enabled {
         println!("\u{2717} TUI disabled (ggnmem config set tui true)");
     } else if !shell_found && tui_enabled {
+        #[cfg(unix)]
         println!("\u{2717} shell hooks not configured (run: ggnmem install)");
+        #[cfg(windows)]
+        println!("— shell hooks not applicable on Windows");
     } else {
         println!("\u{2717} needs shell hooks + TUI enabled");
     }
@@ -946,7 +996,10 @@ async fn doctor() -> Result<()> {
         }
     }
     if !clipboard_found {
+        #[cfg(unix)]
         println!("\u{2717} no clipboard tool found (install xclip or xsel)");
+        #[cfg(windows)]
+        println!("\u{2717} no clipboard tool found");
     }
 
     println!();
@@ -2397,7 +2450,10 @@ fn cmd_ask(args: &[String]) -> Result<()> {
         println!("no suggestions found for: {query}");
         println!();
         println!("  available topics: docker, git, linux, cargo, go, kubernetes");
+        #[cfg(unix)]
         println!("  you can add custom knowledge packs under: ~/.config/ggnmem/knowledge/");
+        #[cfg(windows)]
+        println!("  you can add custom knowledge packs under: %APPDATA%\\ggnmem\\knowledge\\");
         return Ok(());
     }
 
@@ -2555,7 +2611,10 @@ fn print_available_topics(kb: &ggnmem_knowledge::KnowledgeBase) {
     }
     println!();
     println!("  total entries: {}", kb.entry_count());
+    #[cfg(unix)]
     println!("  custom packs:  ~/.config/ggnmem/knowledge/*.json or *.toml");
+    #[cfg(windows)]
+    println!("  custom packs:  %APPDATA%\\ggnmem\\knowledge\\*.json or *.toml");
 }
 
 /// `ggnmem knowledge <list|validate>` — Manage knowledge packs.
@@ -2821,15 +2880,34 @@ fn ai_benchmark() -> Result<()> {
     Ok(())
 }
 
-/// Get the default database path (`~/.local/share/ggnmem/ggnmem.db`).
+/// Get the default database path.
+///
+/// Windows: `%LOCALAPPDATA%\ggnmem\data\ggnmem.db`
+/// Unix:    `~/.local/share/ggnmem/ggnmem.db`
 fn default_db_path() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("~"));
-    let data_home = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".local").join("share"));
-    data_home.join("ggnmem").join("ggnmem.db")
+    #[cfg(windows)]
+    {
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+            return PathBuf::from(local_app_data)
+                .join("ggnmem")
+                .join("data")
+                .join("ggnmem.db");
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("~"));
+        let data_home = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".local").join("share"));
+        return data_home.join("ggnmem").join("ggnmem.db");
+    }
+
+    #[allow(unreachable_code)]
+    PathBuf::from("ggnmem.db")
 }
 
 // ─── IPC helper ──────────────────────────────────────────────────────────────

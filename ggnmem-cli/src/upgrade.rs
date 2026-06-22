@@ -19,21 +19,63 @@ use anyhow::{bail, Context, Result};
 // ─── Path helpers ────────────────────────────────────────────────────────────
 
 fn home_dir() -> Result<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME is not set")
+    #[cfg(windows)]
+    {
+        std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .context("LOCALAPPDATA is not set")
+    }
+
+    #[cfg(unix)]
+    {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .context("HOME is not set")
+    }
 }
 
 fn bin_dir() -> Result<PathBuf> {
-    Ok(home_dir()?.join(".local").join("bin"))
+    #[cfg(windows)]
+    {
+        Ok(home_dir()?.join("ggnmem").join("bin"))
+    }
+
+    #[cfg(unix)]
+    {
+        Ok(home_dir()?.join(".local").join("bin"))
+    }
 }
 
 fn models_dir() -> Result<PathBuf> {
-    let data_home = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir().unwrap_or_default().join(".local").join("share"));
-    Ok(data_home.join("ggnmem").join("models"))
+    #[cfg(windows)]
+    {
+        Ok(home_dir()?.join("ggnmem").join("ai").join("models"))
+    }
+
+    #[cfg(unix)]
+    {
+        let data_home = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_default()
+                    .join(".local")
+                    .join("share")
+            });
+        Ok(data_home.join("ggnmem").join("models"))
+    }
 }
+
+/// Binary name constant with .exe suffix on Windows.
+#[cfg(windows)]
+const CLI_BIN_NAME: &str = "ggnmem.exe";
+#[cfg(unix)]
+const CLI_BIN_NAME: &str = "ggnmem";
+#[cfg(windows)]
+const DAEMON_BIN_NAME: &str = "ggnmem-daemon.exe";
+#[cfg(unix)]
+const DAEMON_BIN_NAME: &str = "ggnmem-daemon";
 
 // ─── Bundle discovery ────────────────────────────────────────────────────────
 
@@ -54,7 +96,7 @@ fn find_bundle(explicit: Option<&str>) -> Result<PathBuf> {
     // Auto-discover: look in common locations.
     let candidates = discover_candidates();
     for candidate in &candidates {
-        if candidate.join("ggnmem").exists() && candidate.join("ggnmem-daemon").exists() {
+        if candidate.join(CLI_BIN_NAME).exists() && candidate.join(DAEMON_BIN_NAME).exists() {
             return Ok(candidate.clone());
         }
     }
@@ -112,7 +154,7 @@ fn extract_tarball(tarball: &Path) -> Result<PathBuf> {
 
     // The tarball might extract into a subdirectory or flat.
     // Check for binaries directly in extract_dir first.
-    if extract_dir.join("ggnmem").exists() {
+    if extract_dir.join(CLI_BIN_NAME).exists() {
         return Ok(extract_dir);
     }
 
@@ -120,14 +162,15 @@ fn extract_tarball(tarball: &Path) -> Result<PathBuf> {
     if let Ok(entries) = fs::read_dir(&extract_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() && path.join("ggnmem").exists() {
+            if path.is_dir() && path.join(CLI_BIN_NAME).exists() {
                 return Ok(path);
             }
         }
     }
 
     bail!(
-        "extracted tarball but could not find ggnmem binary in {}",
+        "extracted tarball but could not find {} binary in {}",
+        CLI_BIN_NAME,
         extract_dir.display()
     );
 }
@@ -223,24 +266,24 @@ fn rollback(target_dir: &Path) {
     println!();
     println!("  ⚠ rolling back to previous binaries...");
 
-    let cli_backup = target_dir.join("ggnmem.old");
-    let daemon_backup = target_dir.join("ggnmem-daemon.old");
-    let cli_target = target_dir.join("ggnmem");
-    let daemon_target = target_dir.join("ggnmem-daemon");
+    let cli_backup = target_dir.join(format!("{CLI_BIN_NAME}.old"));
+    let daemon_backup = target_dir.join(format!("{DAEMON_BIN_NAME}.old"));
+    let cli_target = target_dir.join(CLI_BIN_NAME);
+    let daemon_target = target_dir.join(DAEMON_BIN_NAME);
 
     if cli_backup.exists() {
         if fs::copy(&cli_backup, &cli_target).is_ok() {
-            println!("  ✓ restored ggnmem from backup");
+            println!("  ✓ restored {CLI_BIN_NAME} from backup");
         } else {
-            println!("  ✗ failed to restore ggnmem — manual fix needed");
+            println!("  ✗ failed to restore {CLI_BIN_NAME} — manual fix needed");
         }
     }
 
     if daemon_backup.exists() {
         if fs::copy(&daemon_backup, &daemon_target).is_ok() {
-            println!("  ✓ restored ggnmem-daemon from backup");
+            println!("  ✓ restored {DAEMON_BIN_NAME} from backup");
         } else {
-            println!("  ✗ failed to restore ggnmem-daemon — manual fix needed");
+            println!("  ✗ failed to restore {DAEMON_BIN_NAME} — manual fix needed");
         }
     }
 }
@@ -270,8 +313,8 @@ pub fn cmd_upgrade(args: &[String]) -> Result<()> {
     let bundle_path_arg = crate::parse_named_arg(args, "--bundle");
     let bundle_dir = find_bundle(bundle_path_arg.as_deref())?;
 
-    let new_cli = bundle_dir.join("ggnmem");
-    let new_daemon = bundle_dir.join("ggnmem-daemon");
+    let new_cli = bundle_dir.join(CLI_BIN_NAME);
+    let new_daemon = bundle_dir.join(DAEMON_BIN_NAME);
 
     if !new_cli.exists() {
         bail!("ggnmem binary not found in bundle: {}", new_cli.display());
@@ -335,21 +378,21 @@ pub fn cmd_upgrade(args: &[String]) -> Result<()> {
     fs::create_dir_all(&target_dir)
         .with_context(|| format!("create bin dir: {}", target_dir.display()))?;
 
-    let target_cli = target_dir.join("ggnmem");
-    let target_daemon = target_dir.join("ggnmem-daemon");
+    let target_cli = target_dir.join(CLI_BIN_NAME);
+    let target_daemon = target_dir.join(DAEMON_BIN_NAME);
 
     // Backup existing binaries.
     if target_cli.exists() {
-        let backup = target_dir.join("ggnmem.old");
+        let backup = target_dir.join(format!("{CLI_BIN_NAME}.old"));
         fs::copy(&target_cli, &backup)
             .with_context(|| format!("backup {}", target_cli.display()))?;
-        println!("  ✓ backed up ggnmem → ggnmem.old");
+        println!("  ✓ backed up {CLI_BIN_NAME} → {CLI_BIN_NAME}.old");
     }
     if target_daemon.exists() {
-        let backup = target_dir.join("ggnmem-daemon.old");
+        let backup = target_dir.join(format!("{DAEMON_BIN_NAME}.old"));
         fs::copy(&target_daemon, &backup)
             .with_context(|| format!("backup {}", target_daemon.display()))?;
-        println!("  ✓ backed up ggnmem-daemon → ggnmem-daemon.old");
+        println!("  ✓ backed up {DAEMON_BIN_NAME} → {DAEMON_BIN_NAME}.old");
     }
 
     // Copy new binaries. (Remove existing to avoid 'Text file busy' os error 26)
@@ -359,7 +402,7 @@ pub fn cmd_upgrade(args: &[String]) -> Result<()> {
     fs::copy(&new_cli, &target_cli)
         .with_context(|| format!("copy ggnmem to {}", target_cli.display()))?;
     set_executable(&target_cli)?;
-    println!("  ✓ installed ggnmem");
+    println!("  ✓ installed {CLI_BIN_NAME}");
 
     if target_daemon.exists() {
         let _ = fs::remove_file(&target_daemon);
@@ -367,7 +410,7 @@ pub fn cmd_upgrade(args: &[String]) -> Result<()> {
     fs::copy(&new_daemon, &target_daemon)
         .with_context(|| format!("copy ggnmem-daemon to {}", target_daemon.display()))?;
     set_executable(&target_daemon)?;
-    println!("  ✓ installed ggnmem-daemon");
+    println!("  ✓ installed {DAEMON_BIN_NAME}");
 
     // ── Verify installed binaries ───────────────────────────────────────
 
@@ -388,8 +431,11 @@ pub fn cmd_upgrade(args: &[String]) -> Result<()> {
 
     println!();
     println!("  preserved:");
-    println!("  ✓ config   (~/.config/ggnmem/config.toml)");
-    println!("  ✓ database (~/.local/share/ggnmem/ggnmem.db)");
+    match crate::config::config_path() {
+        Ok(p) => println!("  ✓ config   ({})", p.display()),
+        Err(_) => println!("  ✓ config   (not found)"),
+    }
+    println!("  ✓ database ({})", crate::default_db_path().display());
 
     // Report on installed AI models.
     match models_dir() {
@@ -404,7 +450,8 @@ pub fn cmd_upgrade(args: &[String]) -> Result<()> {
             }
             if model_count > 0 {
                 println!(
-                    "  ✓ models   (~/.local/share/ggnmem/models/ — {} model{})",
+                    "  ✓ models   ({} — {} model{})",
+                    mdir.display(),
                     model_count,
                     if model_count == 1 { "" } else { "s" }
                 );
@@ -438,14 +485,17 @@ pub fn cmd_upgrade(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Set the executable bit on a file (Linux/macOS).
-fn set_executable(path: &Path) -> Result<()> {
-    let status = Command::new("chmod")
-        .args(["+x", &path.to_string_lossy()])
-        .status()
-        .with_context(|| format!("chmod +x {}", path.display()))?;
-    if !status.success() {
-        bail!("chmod +x failed for {}", path.display());
+/// Set the executable bit on a file (Unix only — no-op on Windows).
+fn set_executable(_path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        let status = Command::new("chmod")
+            .args(["+x", &_path.to_string_lossy()])
+            .status()
+            .with_context(|| format!("chmod +x {}", _path.display()))?;
+        if !status.success() {
+            bail!("chmod +x failed for {}", _path.display());
+        }
     }
     Ok(())
 }

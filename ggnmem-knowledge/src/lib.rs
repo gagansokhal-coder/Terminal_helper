@@ -386,19 +386,32 @@ fn entry_to_explain(entry: &KnowledgeEntry) -> ExplainResult {
     }
 }
 
-/// Get the user knowledge directory: `~/.config/ggnmem/knowledge/`
+/// Get the user knowledge directory.
+///
+/// Windows: `%APPDATA%\ggnmem\knowledge\`
+/// Unix:    `~/.config/ggnmem/knowledge/` (or `$XDG_CONFIG_HOME/ggnmem/knowledge/`)
 fn user_knowledge_dir() -> Option<PathBuf> {
-    if let Some(config_home) = std::env::var_os("XDG_CONFIG_HOME") {
-        return Some(PathBuf::from(config_home).join("ggnmem").join("knowledge"));
+    #[cfg(windows)]
+    {
+        if let Some(app_data) = std::env::var_os("APPDATA") {
+            return Some(PathBuf::from(app_data).join("ggnmem").join("knowledge"));
+        }
     }
 
-    if let Some(home) = std::env::var_os("HOME") {
-        return Some(
-            PathBuf::from(home)
-                .join(".config")
-                .join("ggnmem")
-                .join("knowledge"),
-        );
+    #[cfg(unix)]
+    {
+        if let Some(config_home) = std::env::var_os("XDG_CONFIG_HOME") {
+            return Some(PathBuf::from(config_home).join("ggnmem").join("knowledge"));
+        }
+
+        if let Some(home) = std::env::var_os("HOME") {
+            return Some(
+                PathBuf::from(home)
+                    .join(".config")
+                    .join("ggnmem")
+                    .join("knowledge"),
+            );
+        }
     }
 
     None

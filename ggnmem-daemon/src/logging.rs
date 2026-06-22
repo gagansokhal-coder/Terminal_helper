@@ -15,14 +15,27 @@ const DEFAULT_MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 // Number of backup log files to keep.
 const MAX_BACKUP_FILES: u32 = 3;
 
-/// Resolve the log directory: `~/.local/state/ggnmem/logs/`.
+/// Resolve the log directory.
+///
+/// Windows: `%LOCALAPPDATA%\ggnmem\logs\`
+/// Unix:    `~/.local/state/ggnmem/logs/`
 pub fn log_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from).map(|home| {
-        home.join(".local")
-            .join("state")
-            .join("ggnmem")
-            .join("logs")
-    })
+    #[cfg(windows)]
+    {
+        std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .map(|dir| dir.join("ggnmem").join("logs"))
+    }
+
+    #[cfg(unix)]
+    {
+        std::env::var_os("HOME").map(PathBuf::from).map(|home| {
+            home.join(".local")
+                .join("state")
+                .join("ggnmem")
+                .join("logs")
+        })
+    }
 }
 
 /// Resolve the primary log file path.

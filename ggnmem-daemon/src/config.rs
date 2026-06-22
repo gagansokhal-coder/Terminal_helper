@@ -64,7 +64,8 @@ impl DaemonConfig {
 
     #[must_use]
     pub fn new(endpoint: IpcEndpoint, database_path: PathBuf) -> Self {
-        let log_dir = default_log_dir().unwrap_or_else(|_| PathBuf::from("/tmp/ggnmem/logs"));
+        let log_dir =
+            default_log_dir().unwrap_or_else(|_| std::env::temp_dir().join("ggnmem").join("logs"));
         Self {
             endpoint,
             database_path,
@@ -159,14 +160,25 @@ fn parse_env_bool(name: &str, default: bool) -> bool {
 }
 
 fn default_log_dir() -> DaemonResult<PathBuf> {
-    let home = env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| DaemonError::InvalidConfig("HOME is not set".to_owned()))?;
-    Ok(home
-        .join(".local")
-        .join("state")
-        .join("ggnmem")
-        .join("logs"))
+    #[cfg(windows)]
+    {
+        let local_app_data = env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .ok_or_else(|| DaemonError::InvalidConfig("LOCALAPPDATA is not set".to_owned()))?;
+        Ok(local_app_data.join("ggnmem").join("logs"))
+    }
+
+    #[cfg(unix)]
+    {
+        let home = env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| DaemonError::InvalidConfig("HOME is not set".to_owned()))?;
+        Ok(home
+            .join(".local")
+            .join("state")
+            .join("ggnmem")
+            .join("logs"))
+    }
 }
 
 #[cfg(unix)]

@@ -10,26 +10,84 @@ use anyhow::{Context, Result};
 
 // ─── Directory helpers ───────────────────────────────────────────────────────
 
+fn bin_dir() -> Result<PathBuf> {
+    #[cfg(windows)]
+    {
+        let local_app_data = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .context("LOCALAPPDATA is not set")?;
+        Ok(local_app_data.join("ggnmem").join("bin"))
+    }
+
+    #[cfg(unix)]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .context("HOME is not set")?;
+        Ok(home.join(".local").join("bin"))
+    }
+}
+
+fn config_dir() -> Result<PathBuf> {
+    #[cfg(windows)]
+    {
+        let app_data = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .context("APPDATA is not set")?;
+        Ok(app_data.join("ggnmem"))
+    }
+
+    #[cfg(unix)]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .context("HOME is not set")?;
+        Ok(home.join(".config").join("ggnmem"))
+    }
+}
+
+fn data_dir() -> Result<PathBuf> {
+    #[cfg(windows)]
+    {
+        let local_app_data = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .context("LOCALAPPDATA is not set")?;
+        Ok(local_app_data.join("ggnmem").join("data"))
+    }
+
+    #[cfg(unix)]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .context("HOME is not set")?;
+        Ok(home.join(".local").join("share").join("ggnmem"))
+    }
+}
+
+fn state_dir() -> Result<PathBuf> {
+    #[cfg(windows)]
+    {
+        let local_app_data = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .context("LOCALAPPDATA is not set")?;
+        Ok(local_app_data.join("ggnmem"))
+    }
+
+    #[cfg(unix)]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .context("HOME is not set")?;
+        Ok(home.join(".local").join("state").join("ggnmem"))
+    }
+}
+
+/// Home directory — only used for Unix shell rc file paths.
+#[cfg(unix)]
 fn home_dir() -> Result<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("HOME is not set")
-}
-
-fn bin_dir() -> Result<PathBuf> {
-    Ok(home_dir()?.join(".local").join("bin"))
-}
-
-fn config_dir() -> Result<PathBuf> {
-    Ok(home_dir()?.join(".config").join("ggnmem"))
-}
-
-fn data_dir() -> Result<PathBuf> {
-    Ok(home_dir()?.join(".local").join("share").join("ggnmem"))
-}
-
-fn state_dir() -> Result<PathBuf> {
-    Ok(home_dir()?.join(".local").join("state").join("ggnmem"))
 }
 
 // ─── Default config ──────────────────────────────────────────────────────────
@@ -109,57 +167,82 @@ pub fn install() -> Result<()> {
     }
     println!();
 
-    // 3. Shell integration.
-    let shell = detect_shell();
-    match shell.as_deref() {
-        Some("zsh") => {
-            let rc = home_dir()?.join(".zshrc");
-            add_shell_integration(&rc, "zsh")?;
+    // 3. Shell integration (Unix only).
+    #[cfg(unix)]
+    {
+        let shell = detect_shell();
+        match shell.as_deref() {
+            Some("zsh") => {
+                let rc = home_dir()?.join(".zshrc");
+                add_shell_integration(&rc, "zsh")?;
+            }
+            Some("bash") => {
+                let rc = home_dir()?.join(".bashrc");
+                add_shell_integration(&rc, "bash")?;
+            }
+            Some(other) => {
+                println!("  ⚠ shell   unsupported shell: {other}");
+                println!("           add manually: eval \"$(ggnmem init <shell>)\"");
+            }
+            None => {
+                println!("  ⚠ shell   could not detect shell");
+                println!("           add manually: eval \"$(ggnmem init <shell>)\"");
+            }
         }
-        Some("bash") => {
-            let rc = home_dir()?.join(".bashrc");
-            add_shell_integration(&rc, "bash")?;
-        }
-        Some(other) => {
-            println!("  ⚠ shell   unsupported shell: {other}");
-            println!("           add manually: eval \"$(ggnmem init <shell>)\"");
-        }
-        None => {
-            println!("  ⚠ shell   could not detect shell");
-            println!("           add manually: eval \"$(ggnmem init <shell>)\"");
-        }
-    }
-    println!();
+        println!();
 
-    // 4. PATH check.
-    let bin = bin_dir()?;
-    let path_var = std::env::var("PATH").unwrap_or_default();
-    let bin_str = bin.to_string_lossy();
-    if path_var.split(':').any(|p| p == bin_str.as_ref()) {
-        println!("  ✓ PATH    ~/.local/bin is in PATH");
-    } else {
-        println!("  ⚠ PATH    ~/.local/bin is NOT in PATH");
-        println!("           add to your shell rc:");
-        println!("           export PATH=\"$HOME/.local/bin:$PATH\"");
-        // Try to add it to the shell rc file.
-        if let Some(shell_name) = shell.as_deref() {
-            let rc_path = match shell_name {
-                "zsh" => home_dir()?.join(".zshrc"),
-                "bash" => home_dir()?.join(".bashrc"),
-                _ => home_dir()?.join(".profile"),
-            };
-            add_path_export(&rc_path)?;
+        // 4. PATH check.
+        let bin = bin_dir()?;
+        let path_var = std::env::var("PATH").unwrap_or_default();
+        let bin_str = bin.to_string_lossy();
+        if path_var.split(':').any(|p| p == bin_str.as_ref()) {
+            println!("  ✓ PATH    ~/.local/bin is in PATH");
+        } else {
+            println!("  ⚠ PATH    ~/.local/bin is NOT in PATH");
+            println!("           add to your shell rc:");
+            println!("           export PATH=\"$HOME/.local/bin:$PATH\"");
+            // Try to add it to the shell rc file.
+            if let Some(shell_name) = shell.as_deref() {
+                let rc_path = match shell_name {
+                    "zsh" => home_dir()?.join(".zshrc"),
+                    "bash" => home_dir()?.join(".bashrc"),
+                    _ => home_dir()?.join(".profile"),
+                };
+                add_path_export(&rc_path)?;
+            }
         }
+        println!();
     }
-    println!();
+
+    #[cfg(windows)]
+    {
+        println!("  ✓ shell   shell integration not required on Windows");
+        println!();
+
+        // PATH check for Windows.
+        let bin = bin_dir()?;
+        let path_var = std::env::var("PATH").unwrap_or_default();
+        let bin_str = bin.to_string_lossy();
+        if path_var.split(';').any(|p| p.eq_ignore_ascii_case(&bin_str)) {
+            println!("  ✓ PATH    {} is in PATH", bin.display());
+        } else {
+            println!("  ⚠ PATH    {} is NOT in PATH", bin.display());
+            println!("           add it to your system PATH via:");
+            println!("           [System Settings] > Environment Variables > PATH");
+        }
+        println!();
+    }
 
     // 5. Health summary.
     println!("═══════════════════════════════════════");
     println!("  install complete");
     println!();
     println!("  next steps:");
+    #[cfg(unix)]
     println!("    1. source your shell rc or open a new terminal");
-    println!("    2. start the daemon:  ggnmem-daemon &");
+    #[cfg(windows)]
+    println!("    1. open a new terminal if you updated PATH");
+    println!("    2. start the daemon:  ggnmem start");
     println!("    3. verify:            ggnmem doctor");
     println!();
 
@@ -175,17 +258,24 @@ pub fn uninstall(args: &[String]) -> Result<()> {
     println!("═══════════════════════════════════════");
     println!();
 
-    // 1. Remove shell integration from rc files.
-    for rc_name in &[".bashrc", ".zshrc"] {
-        let rc_path = home_dir()?.join(rc_name);
-        if rc_path.exists() {
-            remove_shell_integration(&rc_path)?;
+    // 1. Remove shell integration from rc files (Unix only).
+    #[cfg(unix)]
+    {
+        for rc_name in &[".bashrc", ".zshrc"] {
+            let rc_path = home_dir()?.join(rc_name);
+            if rc_path.exists() {
+                remove_shell_integration(&rc_path)?;
+            }
         }
     }
 
     // 2. Remove binaries.
     let bin = bin_dir()?;
-    for binary in &["ggnmem", "ggnmem-daemon"] {
+    #[cfg(windows)]
+    let binaries = ["ggnmem.exe", "ggnmem-daemon.exe"];
+    #[cfg(unix)]
+    let binaries = ["ggnmem", "ggnmem-daemon"];
+    for binary in &binaries {
         let bin_path = bin.join(binary);
         if bin_path.exists() {
             fs::remove_file(&bin_path)
@@ -236,6 +326,7 @@ pub fn uninstall(args: &[String]) -> Result<()> {
 // ─── Shell helpers ───────────────────────────────────────────────────────────
 
 /// Detect the current shell from $SHELL.
+#[cfg(unix)]
 fn detect_shell() -> Option<String> {
     std::env::var("SHELL").ok().and_then(|s| {
         let name = Path::new(&s).file_name()?.to_str()?.to_owned();
@@ -243,10 +334,13 @@ fn detect_shell() -> Option<String> {
     })
 }
 
+#[cfg(unix)]
 const GGNMEM_MARKER: &str = "# ggnmem shell integration";
+#[cfg(unix)]
 const GGNMEM_MARKER_END: &str = "# end ggnmem";
 
 /// Add shell integration lines to an rc file if not already present.
+#[cfg(unix)]
 fn add_shell_integration(rc_path: &Path, shell: &str) -> Result<()> {
     if rc_path.exists() {
         let contents =
@@ -275,6 +369,7 @@ fn add_shell_integration(rc_path: &Path, shell: &str) -> Result<()> {
 }
 
 /// Remove ggnmem integration lines from an rc file.
+#[cfg(unix)]
 fn remove_shell_integration(rc_path: &Path) -> Result<()> {
     let contents =
         fs::read_to_string(rc_path).with_context(|| format!("read {}", rc_path.display()))?;
@@ -314,6 +409,7 @@ fn remove_shell_integration(rc_path: &Path) -> Result<()> {
 }
 
 /// Add PATH export to rc file if not already present.
+#[cfg(unix)]
 fn add_path_export(rc_path: &Path) -> Result<()> {
     if rc_path.exists() {
         let contents =

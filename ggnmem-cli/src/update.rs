@@ -346,13 +346,27 @@ fn perform_install(
     run_silent_cmd(&["stop"]);
 
     println!("\nBacking up binaries...");
-    let home = std::env::var("HOME").context("HOME not set")?;
-    let bin_dir = std::path::PathBuf::from(home).join(".local/bin");
 
-    let ggnmem_bin = bin_dir.join("ggnmem");
-    let ggnmem_daemon_bin = bin_dir.join("ggnmem-daemon");
-    let ggnmem_old = bin_dir.join("ggnmem.old");
-    let ggnmem_daemon_old = bin_dir.join("ggnmem-daemon.old");
+    #[cfg(windows)]
+    let bin_dir = {
+        let local_app_data = std::env::var("LOCALAPPDATA").context("LOCALAPPDATA not set")?;
+        std::path::PathBuf::from(local_app_data).join("ggnmem").join("bin")
+    };
+    #[cfg(unix)]
+    let bin_dir = {
+        let home = std::env::var("HOME").context("HOME not set")?;
+        std::path::PathBuf::from(home).join(".local/bin")
+    };
+
+    #[cfg(windows)]
+    let (cli_name, daemon_name) = ("ggnmem.exe", "ggnmem-daemon.exe");
+    #[cfg(unix)]
+    let (cli_name, daemon_name) = ("ggnmem", "ggnmem-daemon");
+
+    let ggnmem_bin = bin_dir.join(cli_name);
+    let ggnmem_daemon_bin = bin_dir.join(daemon_name);
+    let ggnmem_old = bin_dir.join(format!("{cli_name}.old"));
+    let ggnmem_daemon_old = bin_dir.join(format!("{daemon_name}.old"));
 
     if ggnmem_bin.exists() {
         std::fs::rename(&ggnmem_bin, &ggnmem_old).context("Failed to backup ggnmem")?;
@@ -507,13 +521,13 @@ fn validate_extracted_bundle(
 }
 
 fn get_download_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from("/tmp/ggnmem-update")
+    std::env::temp_dir().join("ggnmem-update")
 }
 
 fn select_asset<'a>(assets: &'a [GithubAsset], target: &str) -> Option<&'a GithubAsset> {
     assets
         .iter()
-        .find(|a| a.name.contains(target) && a.name.ends_with(".tar.gz"))
+        .find(|a| a.name.contains(target) && (a.name.ends_with(".tar.gz") || a.name.ends_with(".zip")))
 }
 
 fn select_checksums_asset(assets: &[GithubAsset]) -> Option<&GithubAsset> {
@@ -656,10 +670,8 @@ mod tests {
 
     #[test]
     fn test_get_download_dir() {
-        assert_eq!(
-            get_download_dir(),
-            std::path::PathBuf::from("/tmp/ggnmem-update")
-        );
+        let dir = get_download_dir();
+        assert!(dir.ends_with("ggnmem-update"));
     }
 
     #[test]

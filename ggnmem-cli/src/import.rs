@@ -519,9 +519,19 @@ pub fn doctor_history_status() {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn home_dir() -> Result<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME environment variable not set")
+    #[cfg(windows)]
+    {
+        std::env::var_os("USERPROFILE")
+            .map(PathBuf::from)
+            .context("USERPROFILE environment variable not set")
+    }
+
+    #[cfg(unix)]
+    {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .context("HOME environment variable not set")
+    }
 }
 
 fn hostname() -> String {
