@@ -207,6 +207,6 @@ fn default_database_path() -> DaemonResult<PathBuf> {
 
     let data_dir = ggnmem_paths::data_dir()
         .ok_or_else(|| DaemonError::InvalidConfig("Could not resolve data directory".to_owned()))?;
-    
+
     Ok(data_dir.join(DATABASE_FILE_NAME))
 }
