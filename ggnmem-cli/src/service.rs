@@ -82,7 +82,10 @@ fn daemon_binary() -> String {
     #[cfg(windows)]
     {
         if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-            let win_bin = PathBuf::from(local_app_data).join("ggnmem").join("bin").join(DAEMON_BIN_NAME);
+            let win_bin = PathBuf::from(local_app_data)
+                .join("ggnmem")
+                .join("bin")
+                .join(DAEMON_BIN_NAME);
             if win_bin.exists() {
                 return win_bin.to_string_lossy().into_owned();
             }
@@ -92,7 +95,10 @@ fn daemon_binary() -> String {
     #[cfg(unix)]
     {
         if let Some(home) = std::env::var_os("HOME") {
-            let local_bin = PathBuf::from(home).join(".local").join("bin").join(DAEMON_BIN_NAME);
+            let local_bin = PathBuf::from(home)
+                .join(".local")
+                .join("bin")
+                .join(DAEMON_BIN_NAME);
             if local_bin.exists() {
                 return local_bin.to_string_lossy().into_owned();
             }
@@ -499,7 +505,7 @@ fn home_dir() -> Result<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("HOME is not set")
-}──
+}
 
 #[cfg(unix)]
 const SYSTEMD_SERVICE: &str = r#"[Unit]

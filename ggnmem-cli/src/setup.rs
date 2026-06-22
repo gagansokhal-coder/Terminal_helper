@@ -223,7 +223,10 @@ pub fn install() -> Result<()> {
         let bin = bin_dir()?;
         let path_var = std::env::var("PATH").unwrap_or_default();
         let bin_str = bin.to_string_lossy();
-        if path_var.split(';').any(|p| p.eq_ignore_ascii_case(&bin_str)) {
+        if path_var
+            .split(';')
+            .any(|p| p.eq_ignore_ascii_case(&bin_str))
+        {
             println!("  ✓ PATH    {} is in PATH", bin.display());
         } else {
             println!("  ⚠ PATH    {} is NOT in PATH", bin.display());

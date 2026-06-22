@@ -637,7 +637,10 @@ async fn doctor() -> Result<()> {
         let local_app_data = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("C:\\"));
-        local_app_data.join("ggnmem").join("logs").join("daemon.log")
+        local_app_data
+            .join("ggnmem")
+            .join("logs")
+            .join("daemon.log")
     };
     #[cfg(unix)]
     let log_file = {

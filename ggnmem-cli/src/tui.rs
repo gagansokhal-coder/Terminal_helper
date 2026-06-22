@@ -1220,9 +1220,7 @@ fn action_file(name: &str) -> Result<PathBuf> {
     #[cfg(windows)]
     {
         let local_app_data = std::env::var_os("LOCALAPPDATA").context("LOCALAPPDATA is not set")?;
-        Ok(PathBuf::from(local_app_data)
-            .join("ggnmem")
-            .join(name))
+        Ok(PathBuf::from(local_app_data).join("ggnmem").join(name))
     }
 
     #[cfg(unix)]

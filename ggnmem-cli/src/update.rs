@@ -350,7 +350,9 @@ fn perform_install(
     #[cfg(windows)]
     let bin_dir = {
         let local_app_data = std::env::var("LOCALAPPDATA").context("LOCALAPPDATA not set")?;
-        std::path::PathBuf::from(local_app_data).join("ggnmem").join("bin")
+        std::path::PathBuf::from(local_app_data)
+            .join("ggnmem")
+            .join("bin")
     };
     #[cfg(unix)]
     let bin_dir = {
@@ -525,9 +527,9 @@ fn get_download_dir() -> std::path::PathBuf {
 }
 
 fn select_asset<'a>(assets: &'a [GithubAsset], target: &str) -> Option<&'a GithubAsset> {
-    assets
-        .iter()
-        .find(|a| a.name.contains(target) && (a.name.ends_with(".tar.gz") || a.name.ends_with(".zip")))
+    assets.iter().find(|a| {
+        a.name.contains(target) && (a.name.ends_with(".tar.gz") || a.name.ends_with(".zip"))
+    })
 }
 
 fn select_checksums_asset(assets: &[GithubAsset]) -> Option<&GithubAsset> {
