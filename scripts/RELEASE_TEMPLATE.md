@@ -16,8 +16,14 @@
 
 ### One-Line Install
 
+**Linux / WSL:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gagansokhal-coder/Terminal_helper/main/scripts/install-online.sh | bash
+```
+
+**Windows:**
+```powershell
+irm https://ggnmem.mytechy.in/install.ps1 | iex
 ```
 
 ### Upgrade Existing Installation
@@ -26,12 +32,16 @@ curl -fsSL https://raw.githubusercontent.com/gagansokhal-coder/Terminal_helper/m
 ggnmem self-update
 ```
 
-### Manual Install (from tarball)
+### Manual Install (from bundle)
 
+**Linux:**
 ```bash
 tar xzf ggnmem-linux-__ARCH__.tar.gz
 bash install.sh
 ```
+
+**Windows:**
+Extract `ggnmem-windows-x86_64.zip` and run `install.ps1`.
 
 ### Verify Installation
 
@@ -44,7 +54,9 @@ ggnmem doctor
 
 | Asset | SHA256 |
 |-------|--------|
-| `ggnmem-linux-__ARCH__.tar.gz` | `__TARBALL_SHA256__` |
+| `ggnmem-linux-x86_64.tar.gz` | `__TARBALL_SHA256__` |
+| `ggnmem-linux-aarch64.tar.gz` | `__TARBALL_AARCH64_SHA256__` |
+| `ggnmem-windows-x86_64.zip` | `__ZIP_SHA256__` |
 
 ## Build Info
 
@@ -59,7 +71,7 @@ ggnmem doctor
 
 ## Requirements
 
-- Linux (x86_64 or aarch64) or WSL
+- Linux (x86_64 or aarch64) or WSL or Windows (x86_64)
 - No Rust toolchain required (pre-built binaries)
 - ~100 MB disk space (with AI model)
 
@@ -67,9 +79,9 @@ ggnmem doctor
 
 The following user data is automatically preserved during upgrades:
 
-- `~/.config/ggnmem/config.toml` — configuration
-- `~/.local/share/ggnmem/ggnmem.db` — command history database
-- `~/.local/share/ggnmem/models/` — installed AI models
+- `~/.config/ggnmem/` or `%APPDATA%\ggnmem\` — configuration
+- `~/.local/share/ggnmem/` or `%LOCALAPPDATA%\ggnmem\data\` — command history database
+- `~/.local/share/ggnmem/models/` or `%LOCALAPPDATA%\ggnmem\models\` — installed AI models
 
 ## Uninstall
 

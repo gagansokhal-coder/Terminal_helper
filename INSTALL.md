@@ -188,7 +188,7 @@ ggnmem doctor
 Expected output from `ggnmem doctor`:
 
 ```
-  ✅ Binary:    ~/.local/bin/ggnmem (v0.3.7-alpha)
+  ✅ Binary:    ~/.local/bin/ggnmem (v0.3.10-alpha)
   ✅ Daemon:    ~/.local/bin/ggnmem-daemon
   ✅ Config:    ~/.config/ggnmem/config.toml
   ✅ Database:  ~/.local/share/ggnmem/ggnmem.db
@@ -337,24 +337,34 @@ ggnmem version
 
 ## Uninstall
 
+**Linux / WSL:**
 ```bash
 # Remove binaries and shell hooks (keeps your database and config)
 ggnmem uninstall
 
 # Remove everything, including database, config, and models
-ggnmem uninstall --full
+ggnmem uninstall --purge
+```
+
+**Windows:**
+```powershell
+# Remove binaries and shell hooks (keeps your database and config)
+ggnmem uninstall
+
+# Remove everything, including database, config, and models
+ggnmem uninstall --purge
 ```
 
 ### What gets removed
 
-| `ggnmem uninstall` | `ggnmem uninstall --full` |
-|---------------------|---------------------------|
-| `~/.local/bin/ggnmem` | ✅ Removed |
-| `~/.local/bin/ggnmem-daemon` | ✅ Removed |
-| Shell hooks in `~/.bashrc` / `~/.zshrc` | ✅ Removed |
-| `~/.config/ggnmem/` | ❌ Kept | ✅ Removed |
-| `~/.local/share/ggnmem/` (database + models) | ❌ Kept | ✅ Removed |
-| `~/.local/state/ggnmem/` (logs, PID) | ✅ Removed |
+| Component | `ggnmem uninstall` | `ggnmem uninstall --purge` |
+|---------------------|---------------------------|---------------------------|
+| `~/.local/bin/ggnmem` / `%LOCALAPPDATA%\ggnmem\bin\ggnmem.exe` | ✅ Removed | ✅ Removed |
+| `~/.local/bin/ggnmem-daemon` / `%LOCALAPPDATA%\ggnmem\bin\ggnmem-daemon.exe` | ✅ Removed | ✅ Removed |
+| Shell hooks / PowerShell profile hook | ✅ Removed | ✅ Removed |
+| `~/.config/ggnmem/` / `%APPDATA%\ggnmem\` | ❌ Kept | ✅ Removed |
+| `~/.local/share/ggnmem/` / `%LOCALAPPDATA%\ggnmem\data\` (database + models) | ❌ Kept | ✅ Removed |
+| `~/.local/state/ggnmem/` / `%LOCALAPPDATA%\ggnmem\logs\` | ✅ Removed | ✅ Removed |
 
 ---
 

@@ -523,9 +523,9 @@ manageable.
     legacy `ncurses` C bindings. It natively supports the raw mode
     interactions required for the PTY proxy.
 
--   **Semantic Search Libraries:** The `candle` crate by HuggingFace is
-    selected for tensor operations. It is a minimalist machine learning
-    framework specifically built for Rust. It allows the embedding model
+-   **Semantic Search Libraries:** The `ort` crate (ONNX Runtime) is
+    selected for tensor operations. It is a highly optimized execution engine
+    for machine learning models. It allows the embedding model
     to be executed entirely on the CPU in a matter of milliseconds
     without requiring massive Python dependencies, CUDA runtimes, or
     PyTorch \[30\].
@@ -551,10 +551,16 @@ subsystems without breaking the core engine:
 -   `ggnmem-db`: The schema definitions, migrations, and `rusqlite`
     bindings.
 
--   `ggnmem-model`: The Candle-based tensor execution and tokenization
+-   `ggnmem-model`: The legacy model execution crate.
+
+-   `ggnmem-ai`: The ONNX Runtime (`ort`) tensor execution and tokenization
     logic.
 
 -   `ggnmem-pty`: The pseudoterminal multiplexer proxy layer.
+
+-   `ggnmem-knowledge`: Built-in and custom documentation packs.
+
+-   `ggnmem-paths`: Centralized XDG and Windows path management.
 
 To scale contributions, the project must implement a strict Request For
 Comments (RFC) process for major architectural changes, ensuring that
@@ -630,7 +636,7 @@ acting as an automated workflow memory engine.
 ## Phase 2: Autonomous AI Shell Assistant
 
 With an embedded vector database and local LLM execution capabilities
-(via Candle), `ggnmem` can introduce generative workflows directly into
+(via ONNX Runtime), `ggnmem` can introduce generative workflows directly into
 the terminal without external API keys. Instead of merely searching past
 commands, the user can query the daemon in natural language. The daemon
 utilizes local Retrieval-Augmented Generation (RAG). It pulls the top 10

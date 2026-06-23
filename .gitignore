@@ -1,11 +1,16 @@
 /target/
 /release/
+/mkdir/
+/export/
 **/*.db
 **/*.db-shm
 **/*.db-wal
 *.sqlite
 *.sqlite3
 *.tar.gz
+*.zip
+*.exe
+*.pdb
 RELEASE_NOTES.md
 checksums.txt
 docs/agent_memory.md

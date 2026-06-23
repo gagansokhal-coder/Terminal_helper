@@ -28,6 +28,9 @@ The architecture is intentionally modular and must remain a Rust multi-crate Car
 - `ggnmem-db`
 - `ggnmem-model`
 - `ggnmem-pty`
+- `ggnmem-ai`
+- `ggnmem-knowledge`
+- `ggnmem-paths`
 
 The approved stack remains:
 
@@ -36,7 +39,7 @@ The approved stack remains:
 - SQLite through `rusqlite`
 - SQLite WAL and FTS5
 - `sqlite-vec` through C-FFI
-- HuggingFace `candle`
+- ONNX Runtime (`ort` crate)
 - Quantized `all-MiniLM-L6-v2`
 - `ratatui` with `crossterm`
 - Unix Domain Sockets on Linux
@@ -46,20 +49,19 @@ No cloud APIs, external embedding services, Redis, Postgres, Go rewrite, Electro
 
 ## Current Project Maturity
 
-Current maturity: **planning and foundation stage**.
+Current maturity: **active pre-alpha stage**.
 
-The project has a strong architecture specification but no completed implementation is recorded yet. The next practical work is repository and Cargo workspace initialization, followed by the database layer and Linux IPC path.
+The project has a robust architecture and the core engine is fully implemented. The Cargo workspace contains the required crates, Linux and Windows binaries are built in CI, and full FTS/semantic search works locally.
 
 Current status:
 
-- Architecture is defined.
-- Technology choices are fixed.
-- Core crates are identified.
-- Performance and privacy constraints are defined.
-- Implementation progress is effectively 0%.
-- MVP scope still needs disciplined boundaries to avoid expanding into advanced assistant or enterprise features too early.
-
-The project should be treated as a serious infrastructure tool in early pre-alpha stage.
+- Architecture is defined and implemented.
+- Technology choices are fixed and validated.
+- Core crates are created and actively maintained.
+- Local command capture, storage, semantic indexing, and search work.
+- TUI overlay functions as a `Ctrl+R` replacement.
+- Windows native installation and build pipelines are complete.
+- Distribution pathways (install scripts, self-update) are operational.
 
 ## MVP Boundaries
 
@@ -78,11 +80,11 @@ MVP includes:
 - Core command schema with session, command, cwd, exit code, duration, timestamp, and content hash.
 - Secret redaction before persistence.
 - FTS5 keyword/fuzzy search.
-- Local embedding generation through `candle`.
+- Local embedding generation through ONNX Runtime (`ort`).
 - `sqlite-vec` semantic indexing.
 - Hybrid search using RRF with `k = 60`.
 - Contextual ranking for CWD match, failed command penalty, and frecency.
-- Basic CLI search command for validation.
+- Interactive CLI search UI.
 
 MVP excludes:
 
@@ -182,13 +184,13 @@ Goal: deliver useful local retrieval.
 Deliverables:
 
 - FTS5 keyword/fuzzy search with BM25 ranking.
-- Candle model loading.
+- ONNX model loading.
 - Quantized `all-MiniLM-L6-v2` embedding generation.
 - `sqlite-vec` integration.
 - HNSW vector search.
 - RRF merge with `k = 60`.
 - CWD, exit-code, and frecency scoring adjustments.
-- CLI search command.
+- Interactive CLI search command.
 
 Milestone:
 
@@ -376,7 +378,35 @@ Deliverables:
 
 Milestone:
 
-- New GitHub releases automatically guide users to the website and online installer.
+### Phase 26A — Windows Release Assets in CI (Completed)
+
+Goal: Build native Windows binaries and package them for releases.
+
+Deliverables:
+
+- `x86_64-pc-windows-msvc` target added to GitHub Actions release pipeline.
+- `ggnmem-windows-x86_64.zip` release artifact generated automatically.
+- Checksums generation updated for `.zip` format.
+
+Milestone:
+
+- Automated pipelines now output ready-to-run Windows artifacts for every release.
+
+### Phase 26B — Windows PowerShell Installer (Completed)
+
+Goal: Frictionless installation experience on Windows 10/11.
+
+Deliverables:
+
+- `install.ps1` PowerShell bootstrap script.
+- Automated fetching and checksum verification for Windows binaries.
+- Config, data, and models path correctly routed to `%LOCALAPPDATA%` and `%APPDATA%`.
+- `ggnmem self-update` supports Windows in-place upgrades.
+- Path modification and profile hook instructions included.
+
+Milestone:
+
+- Windows users can install and manage `ggnmem` securely via PowerShell using `irm | iex`.
 
 ## Linux-First Rollout
 
@@ -405,20 +435,20 @@ Linux support requirements:
 
 ## Future Windows Support
 
-Windows support should begin only after the Linux MVP proves the core storage, daemon, search, and redaction model.
+Windows support has begun through Phase 26, which established native builds and installation pathways. Further integration requires expanding shell hooks and platform abstractions.
 
 Windows support order:
 
-1. PAL interfaces reviewed against the working Linux implementation.
-2. Local Named Pipe IPC with strict ACLs.
-3. Windows filesystem paths and AppData placement.
-4. PowerShell integration through PSReadLine and `Set-PSReadLineOption`.
-5. Windows Terminal VT behavior validation.
-6. MSI or `winget` packaging.
-7. CMD support research.
-8. CMD support implementation only if the DLL injection risk is accepted and isolated to a Windows-specific crate.
+1. Local Named Pipe IPC with strict ACLs (Implemented).
+2. Windows filesystem paths and AppData placement (Implemented).
+3. `install.ps1` installer and `self-update` support (Implemented).
+4. PowerShell integration through PSReadLine and `Set-PSReadLineOption` (Planned).
+5. Windows Terminal VT behavior validation (Planned).
+6. MSI or `winget` packaging (Planned).
+7. CMD support research (Planned).
+8. CMD support implementation only if the DLL injection risk is accepted and isolated to a Windows-specific crate (Planned).
 
-Windows MVP should initially target PowerShell, not CMD.
+Windows MVP initially targets PowerShell, not CMD.
 
 CMD support remains deferred because reliable capture requires invasive Windows-specific API hooking. It must not contaminate the cross-platform core.
 

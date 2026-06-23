@@ -42,8 +42,14 @@ Your terminal history contains highly sensitive data, from server addresses to p
 
 ## Quick Install
 
+**Linux / WSL:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gagansokhal-coder/Terminal_helper/main/scripts/install-online.sh | bash
+```
+
+**Windows:**
+```powershell
+irm https://ggnmem.mytechy.in/install.ps1 | iex
 ```
 
 *This bootstrap script detects your architecture, installs the latest pre-built binaries, and configures your shell hooks automatically.*
@@ -151,8 +157,8 @@ Built on a strict **local-first philosophy**:
 
 **Current Status:** Linux MVP complete with full shell capture, hybrid search, interactive TUI, and AI embeddings.
 
-**Phase 26+ Focus:**
-*   Windows PowerShell native support
+**Phase 27+ Focus:**
+*   Windows CMD integration research
 *   Ghost-text autosuggestions
 *   Fish and Nushell hook integrations
 *   Enhanced custom indexing plugins

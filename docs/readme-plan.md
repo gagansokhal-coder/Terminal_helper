@@ -17,7 +17,7 @@
   * One-line installation script
 
 ## 4. Quick Install
-* **Content:** The fastest way to get started. Include the `curl | bash` command and specify supported platforms (Linux x86_64/aarch64, WSL).
+* **Content:** The fastest way to get started. Include the `curl | bash` command for Linux and `irm | iex` for Windows. Specify supported platforms (Linux x86_64/aarch64, WSL, Windows x86_64).
 
 ## 5. Quick Start
 * **Content:** A brief, step-by-step guide from starting the daemon to running the first search. Include commands like `ggnmem doctor`, `ggnmem start`, and `ggnmem ui`.
@@ -41,7 +41,7 @@
 * **Content:** Reiterate the local-first philosophy. Highlight zero network requests, secret redaction, and strict local data storage.
 
 ## 12. Roadmap
-* **Content:** A snapshot of future plans (e.g., Phase 26+ goals). Mention upcoming features like Windows PowerShell support and ghost-text autosuggestions. Provide a link to the full roadmap document.
+* **Content:** A snapshot of future plans (e.g., Phase 27+ goals). Mention upcoming features like Windows CMD support and ghost-text autosuggestions. Provide a link to the full roadmap document.
 
 ## 13. Contributing
 * **Content:** Guidelines for developers who want to contribute. Mention formatting (`cargo fmt`), linting (`cargo clippy`), and testing requirements.

@@ -1,8 +1,15 @@
 # Quick Install
 
+**Linux / WSL:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gagansokhal-coder/Terminal_helper/main/scripts/install-online.sh | bash
 ```
+
+**Windows:**
+```powershell
+irm https://ggnmem.mytechy.in/install.ps1 | iex
+```
+
 *This bootstrap script detects your architecture, installs the latest pre-built binaries, and configures your shell hooks automatically.*
 
 ---

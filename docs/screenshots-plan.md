@@ -4,7 +4,8 @@ This document outlines the visual assets (screenshots/GIFs) needed for the READM
 
 ### 0. One-Line Install Success
 *   **Purpose:** Show a complete installation from a clean system.
-*   **Example command:** `curl -fsSL https://raw.githubusercontent.com/gagansokhal-coder/Terminal_helper/main/scripts/install-online.sh | bash`
+*   **Example command (Linux):** `curl -fsSL https://raw.githubusercontent.com/gagansokhal-coder/Terminal_helper/main/scripts/install-online.sh | bash`
+*   **Example command (Windows):** `irm https://ggnmem.mytechy.in/install.ps1 | iex`
 *   **Recommended terminal size:** 100x25
 *   **Suggested filename:** `install-success.gif`
 

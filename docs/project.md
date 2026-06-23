@@ -44,7 +44,7 @@ You are restricted to the following technologies. Do not suggest or implement al
   * Must use rusqlite.  
   * Must use sqlite-vec (via C-FFI) for HNSW vector indexing.  
   * Must use SQLite FTS5 extension for keyword/fuzzy search.  
-* **Machine Learning:** HuggingFace candle crate.  
+* **Machine Learning:** ONNX Runtime (`ort` crate).  
   * Model: Quantized all-MiniLM-L6-v2 (running 100% locally on CPU).  
 * **TUI Framework:** ratatui (with crossterm).  
 * **Async Runtime:** tokio (for the background daemon).
@@ -87,9 +87,9 @@ When writing shell integration scripts:
 
 When acting on this repository, execute tasks in the following sequence unless overridden by the user:
 
-1. **Phase 1: Foundation.** Setup Cargo workspace (ggnmem-cli, ggnmem-daemon, ggnmem-db, ggnmem-model, ggnmem-pty).  
+1. **Phase 1: Foundation.** Setup Cargo workspace (ggnmem-cli, ggnmem-daemon, ggnmem-db, ggnmem-model, ggnmem-pty, ggnmem-ai, ggnmem-knowledge, ggnmem-paths).  
 2. **Phase 2: Database & Storage.** Implement the SQLite schema, WAL configuration, and sqlite-vec integration.  
-3. **Phase 3: AI Engine.** Implement the candle model loader, queue worker, and Reciprocal Rank Fusion search logic.  
+3. **Phase 3: AI Engine.** Implement the ONNX model loader, queue worker, and Reciprocal Rank Fusion search logic.  
 4. **Phase 4: IPC & Daemon.** Build the cross-platform socket/pipe communication layer.  
 5. **Phase 5: Shell Hooks.** Write the ephemeral CLI and .sh/.ps1 hook generators.  
 6. **Phase 6: TUI & PTY.** Build the ratatui interface and PTY shadow buffer logic.
@@ -104,6 +104,8 @@ When acting on this repository, execute tasks in the following sequence unless o
 15. **Phase 24: Documentation.** Create README, INSTALL.md, visual assets, and update all architectural files to reflect the final project state.
 16. **Phase 25: Landing Page.** Build the modern, Next.js static landing page for `ggnmem` with SEO, screenshots, and vercel deployment configuration.
 17. **Phase 25.1: Release Workflow Modernization.** Update automated GitHub release pipeline to advertise new primary install/upgrade workflows (website, online installer, self-update).
+18. **Phase 26A: Windows Release Assets.** Build native Windows binaries (`x86_64-pc-windows-msvc`) in CI and package `.zip` release artifacts.
+19. **Phase 26B: Windows PowerShell Installer.** Build `install.ps1` for frictionless native Windows installation to `%LOCALAPPDATA%`, and enable `ggnmem self-update` for Windows.
 
 **END OF SYSTEM DIRECTIVES.** Proceed with generating the required workspace architecture.
 

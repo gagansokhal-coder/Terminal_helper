@@ -2,7 +2,9 @@
 
 ## Why the Bootstrap Installer Exists
 
-The `install-online.sh` script serves as the primary entry point for users to get `ggnmem` running on their systems via a single `curl | bash` command. Its purpose is to securely bootstrap the environment by detecting the system platform, resolving the correct binary bundle, verifying its integrity, and managing the initial installation setup—all before `ggnmem` itself is available to take over.
+The `install-online.sh` script serves as the primary entry point for Linux/WSL users to get `ggnmem` running on their systems via a single `curl | bash` command. Its purpose is to securely bootstrap the environment by detecting the system platform, resolving the correct binary bundle, verifying its integrity, and managing the initial installation setup—all before `ggnmem` itself is available to take over.
+
+*(Note: Windows users use the `install.ps1` equivalent which operates via `irm | iex` with a similar security model.)*
 
 ## Why GitHub Releases are Used
 

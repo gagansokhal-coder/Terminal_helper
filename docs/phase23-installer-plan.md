@@ -1,4 +1,6 @@
-# Phase 23 - Installer & Distribution
+# Phase 23 - Installer & Distribution (Completed)
+
+> *Note: This phase established the Linux/WSL distribution pathways. Windows native installers were subsequently implemented in Phase 26.*
 
 ## Goals
 
