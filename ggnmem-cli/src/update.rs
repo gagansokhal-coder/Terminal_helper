@@ -473,22 +473,23 @@ fn extract_archive(archive_path: &std::path::Path, extract_dir: &std::path::Path
     let name = archive_path.to_string_lossy();
 
     if name.ends_with(".zip") {
-        // Use PowerShell Expand-Archive for .zip files (works on Windows).
-        let status = std::process::Command::new("powershell")
+        // Use .NET ZipFile for extraction (built-in, no module required).
+        let output = std::process::Command::new("powershell")
             .args([
                 "-NoProfile",
                 "-Command",
                 &format!(
-                    "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                    "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('{}', '{}')",
                     archive_path.display(),
                     extract_dir.display()
                 ),
             ])
-            .status()
-            .context("Failed to run PowerShell Expand-Archive")?;
+            .output()
+            .context("Failed to run PowerShell ZIP extraction")?;
 
-        if !status.success() {
-            bail!("Failed to extract ZIP archive");
+        if !output.status.success() {
+            let err_msg = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to extract ZIP archive: {}", err_msg.trim());
         }
     } else {
         extract_tar_gz(archive_path, extract_dir)?;

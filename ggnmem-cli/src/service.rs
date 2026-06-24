@@ -907,7 +907,7 @@ fn enable_task_scheduler() -> Result<()> {
     fs::create_dir_all(&logs).with_context(|| format!("create log dir: {}", logs.display()))?;
 
     // schtasks /CREATE /SC ONLOGON /TN "ggnmem-daemon" /TR "..." /RL LIMITED /F
-    let status = Command::new("schtasks")
+    let output = Command::new("schtasks")
         .args([
             "/CREATE",
             "/SC",
@@ -915,20 +915,22 @@ fn enable_task_scheduler() -> Result<()> {
             "/TN",
             TASK_NAME,
             "/TR",
-            &format!("\"{}\" --background", daemon_bin),
+            &format!("'{}' --background", daemon_bin),
             "/RL",
             "LIMITED",
             "/F", // overwrite if exists
         ])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .context("schtasks /CREATE")?;
+        .output()
+        .context("schtasks /CREATE execution failed")?;
 
-    if status.success() {
+    if output.status.success() {
         println!("  ✓ scheduled task '{TASK_NAME}' created (runs at logon)");
     } else {
-        bail!("failed to create scheduled task '{TASK_NAME}'");
+        let err_msg = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "failed to create scheduled task '{TASK_NAME}': {}",
+            err_msg.trim()
+        );
     }
     Ok(())
 }

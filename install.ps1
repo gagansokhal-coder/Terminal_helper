@@ -598,12 +598,13 @@ Step-Log "Enabling autostart..."
 
 try {
     $daemonBin = Join-Path $BIN_DIR "ggnmem-daemon.exe"
-    $schtasksArgs = @("/CREATE", "/SC", "ONLOGON", "/TN", "ggnmem-daemon", "/TR", "`"$daemonBin`" --background", "/RL", "LIMITED", "/F")
-    $schtasksResult = & schtasks $schtasksArgs 2>&1 | Out-String
+    $schtasksArgs = @("/CREATE", "/SC", "ONLOGON", "/TN", "ggnmem-daemon", "/TR", "'$daemonBin' --background", "/RL", "LIMITED", "/F")
+    $schtasksOutput = & schtasks $schtasksArgs 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0) {
         Ok-Log "Scheduled task 'ggnmem-daemon' created (runs at logon)"
     } else {
-        Warn-Log "Could not create scheduled task. Enable manually: ggnmem autostart enable"
+        Warn-Log "Could not create scheduled task: $($schtasksOutput.Trim())"
+        Warn-Log "Enable manually: ggnmem autostart enable"
     }
 } catch {
     Warn-Log "Could not create scheduled task: $($_.Exception.Message)"
