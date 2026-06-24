@@ -304,7 +304,12 @@ fn extract_step(
 
     if verbose {
         #[cfg(windows)]
-        let expected_files = ["ggnmem.exe", "ggnmem-daemon.exe", "VERSION", "checksums.txt"];
+        let expected_files = [
+            "ggnmem.exe",
+            "ggnmem-daemon.exe",
+            "VERSION",
+            "checksums.txt",
+        ];
         #[cfg(unix)]
         let expected_files = ["ggnmem", "ggnmem-daemon", "install.sh", "VERSION"];
 
@@ -511,7 +516,12 @@ fn validate_extracted_bundle(
     expected_version: &str,
 ) -> Result<String> {
     #[cfg(windows)]
-    let required_files = ["ggnmem.exe", "ggnmem-daemon.exe", "VERSION", "checksums.txt"];
+    let required_files = [
+        "ggnmem.exe",
+        "ggnmem-daemon.exe",
+        "VERSION",
+        "checksums.txt",
+    ];
     #[cfg(unix)]
     let required_files = [
         "ggnmem",
