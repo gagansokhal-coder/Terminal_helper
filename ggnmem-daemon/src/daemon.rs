@@ -357,6 +357,34 @@ fn state_pid_path() -> Option<PathBuf> {
     ggnmem_paths::state_dir().map(|dir| dir.join("daemon.pid"))
 }
 
+/// Open the PID file with platform-appropriate sharing.
+///
+/// On Windows, sets `FILE_SHARE_READ` so that CLI commands can read the PID
+/// file while the daemon holds its exclusive advisory lock.
+#[cfg(windows)]
+fn open_pid_file(pid_path: &Path) -> io::Result<fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+
+    fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(pid_path)
+}
+
+#[cfg(unix)]
+fn open_pid_file(pid_path: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(pid_path)
+}
+
 /// Acquire an exclusive advisory lock on the PID file.
 ///
 /// * If the lock succeeds, the current PID is written to the file and the
@@ -369,12 +397,7 @@ fn acquire_pid_lock(pid_path: &Path) -> DaemonResult<fs::File> {
         fs::create_dir_all(parent)?;
     }
 
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(pid_path)?;
+    let file = open_pid_file(pid_path)?;
 
     match file.try_lock_exclusive() {
         Ok(()) => {

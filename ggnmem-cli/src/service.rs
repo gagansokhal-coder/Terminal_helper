@@ -77,18 +77,46 @@ fn daemon_binary() -> String {
 
 // ─── PID management ──────────────────────────────────────────────────────────
 
+/// Read the PID file contents using shared-read access on Windows so the read
+/// succeeds even while the daemon holds an exclusive `fs2` lock.
+#[cfg(windows)]
+fn read_pid_shared(path: &std::path::Path) -> std::io::Result<String> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .open(path)?;
+    let mut contents = String::new();
+    std::io::Read::read_to_string(&mut file, &mut contents)?;
+    Ok(contents)
+}
+
+#[cfg(unix)]
+fn read_pid_shared(path: &std::path::Path) -> std::io::Result<String> {
+    fs::read_to_string(path)
+}
+
 fn read_pid() -> Result<Option<u32>> {
     let path = pid_path()?;
     if !path.exists() {
         return Ok(None);
     }
-    let contents =
-        fs::read_to_string(&path).with_context(|| format!("read PID file: {}", path.display()))?;
-    let pid: u32 = contents
-        .trim()
-        .parse()
-        .with_context(|| format!("invalid PID in {}: '{}'", path.display(), contents.trim()))?;
-    Ok(Some(pid))
+    match read_pid_shared(&path) {
+        Ok(contents) => {
+            let pid: u32 = contents.trim().parse().with_context(|| {
+                format!("invalid PID in {}: '{}'", path.display(), contents.trim())
+            })?;
+            Ok(Some(pid))
+        }
+        Err(_) => {
+            // File exists but cannot be read (e.g. locked by daemon on Windows).
+            // Return None rather than failing the entire command.
+            Ok(None)
+        }
+    }
 }
 
 fn write_pid(pid: u32) -> Result<()> {
@@ -110,6 +138,45 @@ fn remove_pid() -> Result<()> {
     Ok(())
 }
 
+/// Check whether the daemon holds an exclusive lock on the PID file,
+/// without needing to read its contents.  Works even when the file is
+/// locked on Windows.
+fn is_daemon_locked(path: &std::path::Path) -> bool {
+    let file = match open_pid_for_lock_probe(path) {
+        Some(f) => f,
+        None => return false,
+    };
+    match fs2::FileExt::try_lock_shared(&file) {
+        Ok(()) => {
+            let _ = fs2::FileExt::unlock(&file);
+            false // No exclusive lock held.
+        }
+        Err(e) if e.kind() == fs2::lock_contended_error().kind() => {
+            true // Daemon holds the exclusive lock.
+        }
+        Err(_) => false,
+    }
+}
+
+/// Open the PID file for lock probing, using shared access on Windows.
+#[cfg(windows)]
+fn open_pid_for_lock_probe(path: &std::path::Path) -> Option<fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+
+    fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .open(path)
+        .ok()
+}
+
+#[cfg(unix)]
+fn open_pid_for_lock_probe(path: &std::path::Path) -> Option<fs::File> {
+    fs::File::open(path).ok()
+}
+
 /// Check if the daemon is alive by probing the advisory lock on the PID file.
 ///
 /// The daemon holds an exclusive `fs2` lock on `daemon.pid` for its entire
@@ -124,25 +191,7 @@ fn is_process_running(_pid: u32) -> bool {
     if !path.exists() {
         return false;
     }
-    let file = match fs::File::open(&path) {
-        Ok(f) => f,
-        Err(_) => return false,
-    };
-    match fs2::FileExt::try_lock_shared(&file) {
-        Ok(()) => {
-            // We got the lock ⇒ nobody holds an exclusive lock ⇒ not running.
-            let _ = fs2::FileExt::unlock(&file);
-            false
-        }
-        Err(e) if e.kind() == fs2::lock_contended_error().kind() => {
-            // Daemon holds the exclusive lock ⇒ running.
-            true
-        }
-        Err(_) => {
-            // Other I/O error — assume not running.
-            false
-        }
-    }
+    is_daemon_locked(&path)
 }
 
 // ─── Stale resource cleanup ─────────────────────────────────────────────────
@@ -197,6 +246,14 @@ pub fn cmd_start() -> Result<()> {
         // Stale PID file — clean it up.
         remove_pid()?;
         println!("  ⚠ cleaned stale PID file (PID {pid})");
+    } else {
+        // PID file might be unreadable (locked on Windows).
+        // Check if daemon is running via lock probe.
+        let path = pid_path()?;
+        if path.exists() && is_daemon_locked(&path) {
+            println!("  ✓ daemon already running (PID unavailable)");
+            return Ok(());
+        }
     }
 
     // Clean up stale resources before starting.
@@ -450,6 +507,10 @@ pub fn cmd_logs(args: &[String]) -> Result<()> {
 // ─── Status (PID-aware) ─────────────────────────────────────────────────────
 
 /// Check daemon status from PID file. Returns (running, pid).
+///
+/// If the PID file exists but cannot be read (e.g. locked by the daemon on
+/// Windows), falls back to probing the advisory lock.  In that case the
+/// returned PID will be `None` but `running` will be `true`.
 pub fn daemon_status() -> Result<(bool, Option<u32>)> {
     match read_pid()? {
         Some(pid) => {
@@ -460,7 +521,16 @@ pub fn daemon_status() -> Result<(bool, Option<u32>)> {
             }
             Ok((running, Some(pid)))
         }
-        None => Ok((false, None)),
+        None => {
+            // PID file might exist but be unreadable (locked on Windows).
+            // Probe the lock to determine if the daemon is running.
+            let path = pid_path()?;
+            if path.exists() && is_daemon_locked(&path) {
+                Ok((true, None)) // Running but PID unavailable.
+            } else {
+                Ok((false, None))
+            }
+        }
     }
 }
 
