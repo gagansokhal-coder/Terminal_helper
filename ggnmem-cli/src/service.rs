@@ -968,6 +968,7 @@ fn is_task_scheduler_enabled() -> bool {
 /// Check if autostart is configured (cross-platform).
 ///
 /// Used by `ggnmem doctor` to report autostart status.
+#[allow(dead_code)]
 pub fn is_autostart_enabled() -> bool {
     #[cfg(windows)]
     {
