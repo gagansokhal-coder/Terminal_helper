@@ -310,10 +310,18 @@ pub fn cmd_start() -> Result<()> {
     let pid = child.id();
     write_pid(pid)?;
 
-    // Give the daemon a moment to start, then verify it's running.
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    // Give the daemon a moment to start, with a bounded timeout.
+    // Total wait: up to 3 seconds (6 × 500ms).
+    let mut started = false;
+    for _ in 0..6 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if is_process_running(pid) {
+            started = true;
+            break;
+        }
+    }
 
-    if is_process_running(pid) {
+    if started {
         println!("  ✓ daemon started (PID {pid})");
 
         // Phase 16F: Run startup health check.
@@ -598,8 +606,7 @@ fn has_systemd() -> bool {
 pub fn cmd_autostart_enable() -> Result<()> {
     #[cfg(windows)]
     {
-        println!("  autostart is not yet supported on Windows.");
-        println!("  start the daemon manually with: ggnmem start");
+        enable_task_scheduler()?;
         return Ok(());
     }
 
@@ -621,7 +628,7 @@ pub fn cmd_autostart_enable() -> Result<()> {
 pub fn cmd_autostart_disable() -> Result<()> {
     #[cfg(windows)]
     {
-        println!("  autostart is not yet supported on Windows.");
+        disable_task_scheduler()?;
         return Ok(());
     }
 
@@ -643,8 +650,14 @@ pub fn cmd_autostart_status() -> Result<()> {
 
     #[cfg(windows)]
     {
-        println!("  autostart is not yet supported on Windows.");
-        println!("  start the daemon manually with: ggnmem start");
+        print!("  task scheduler  ... ");
+        if is_task_scheduler_enabled() {
+            println!("✓ enabled (ggnmem-daemon)");
+        } else {
+            println!("✗ not configured");
+            println!();
+            println!("  enable with: ggnmem autostart enable");
+        }
     }
 
     #[cfg(unix)]
@@ -878,4 +891,109 @@ fn disable_shell_fallback() -> Result<()> {
     }
 
     Ok(())
+}
+
+// ─── Windows Task Scheduler autostart ────────────────────────────────────────
+
+/// Task Scheduler task name for the daemon.
+#[cfg(windows)]
+const TASK_NAME: &str = "ggnmem-daemon";
+
+/// Create a scheduled task that runs the daemon at user logon.
+#[cfg(windows)]
+fn enable_task_scheduler() -> Result<()> {
+    let daemon_bin = daemon_binary();
+    let logs = log_dir()?;
+    fs::create_dir_all(&logs).with_context(|| format!("create log dir: {}", logs.display()))?;
+
+    // schtasks /CREATE /SC ONLOGON /TN "ggnmem-daemon" /TR "..." /RL LIMITED /F
+    let status = Command::new("schtasks")
+        .args([
+            "/CREATE",
+            "/SC",
+            "ONLOGON",
+            "/TN",
+            TASK_NAME,
+            "/TR",
+            &format!("\"{}\" --background", daemon_bin),
+            "/RL",
+            "LIMITED",
+            "/F", // overwrite if exists
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .context("schtasks /CREATE")?;
+
+    if status.success() {
+        println!("  ✓ scheduled task '{TASK_NAME}' created (runs at logon)");
+    } else {
+        bail!("failed to create scheduled task '{TASK_NAME}'");
+    }
+    Ok(())
+}
+
+/// Remove the scheduled task.
+#[cfg(windows)]
+fn disable_task_scheduler() -> Result<()> {
+    let status = Command::new("schtasks")
+        .args(["/DELETE", "/TN", TASK_NAME, "/F"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .context("schtasks /DELETE")?;
+
+    if status.success() {
+        println!("  ✓ scheduled task '{TASK_NAME}' removed");
+    } else {
+        println!("  ⚠ scheduled task '{TASK_NAME}' not found or could not be removed");
+    }
+    Ok(())
+}
+
+/// Check whether the Task Scheduler task exists.
+#[cfg(windows)]
+fn is_task_scheduler_enabled() -> bool {
+    Command::new("schtasks")
+        .args(["/QUERY", "/TN", TASK_NAME])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+// ─── Cross-platform autostart query ──────────────────────────────────────────
+
+/// Check if autostart is configured (cross-platform).
+///
+/// Used by `ggnmem doctor` to report autostart status.
+pub fn is_autostart_enabled() -> bool {
+    #[cfg(windows)]
+    {
+        is_task_scheduler_enabled()
+    }
+    #[cfg(unix)]
+    {
+        // Check systemd.
+        if has_systemd() {
+            if let Ok(p) = systemd_service_path() {
+                if p.exists() {
+                    return true;
+                }
+            }
+        }
+        // Check shell rc.
+        if let Ok(home) = home_dir() {
+            for rc in &[".bashrc", ".zshrc"] {
+                let rc_path = home.join(rc);
+                if let Ok(contents) = fs::read_to_string(&rc_path) {
+                    if contents.contains(AUTOSTART_MARKER) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
 }

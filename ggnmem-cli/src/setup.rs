@@ -178,7 +178,15 @@ pub fn install() -> Result<()> {
         println!();
     }
 
-    // 5. Health summary.
+    // 5. Enable autostart.
+    println!("autostart:");
+    match crate::service::cmd_autostart_enable() {
+        Ok(()) => {} // cmd_autostart_enable prints its own message
+        Err(e) => println!("  ⚠ could not enable autostart: {e}"),
+    }
+    println!();
+
+    // 6. Health summary.
     println!("═══════════════════════════════════════");
     println!("  install complete");
     println!();
@@ -203,7 +211,11 @@ pub fn uninstall(args: &[String]) -> Result<()> {
     println!("═══════════════════════════════════════");
     println!();
 
-    // 1. Remove shell integration from rc files (Unix only).
+    // 1. Remove autostart before removing binaries.
+    println!("  removing autostart...");
+    let _ = crate::service::cmd_autostart_disable();
+
+    // 2. Remove shell integration from rc files (Unix only).
     #[cfg(unix)]
     {
         for rc_name in &[".bashrc", ".zshrc"] {
@@ -214,7 +226,7 @@ pub fn uninstall(args: &[String]) -> Result<()> {
         }
     }
 
-    // 2. Remove binaries.
+    // 3. Remove binaries.
     let bin = bin_dir()?;
     #[cfg(windows)]
     let binaries = ["ggnmem.exe", "ggnmem-daemon.exe"];

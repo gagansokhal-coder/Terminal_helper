@@ -592,19 +592,55 @@ if ($script:UpgradeMode) {
     Info-Log "New:      $($script:NewVersion)"
 }
 
+# ─── 14b. Enable autostart ────────────────────────────────────────────────────
+
+Step-Log "Enabling autostart..."
+
+try {
+    $daemonBin = Join-Path $BIN_DIR "ggnmem-daemon.exe"
+    $schtasksArgs = @("/CREATE", "/SC", "ONLOGON", "/TN", "ggnmem-daemon", "/TR", "`"$daemonBin`" --background", "/RL", "LIMITED", "/F")
+    $schtasksResult = & schtasks $schtasksArgs 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0) {
+        Ok-Log "Scheduled task 'ggnmem-daemon' created (runs at logon)"
+    } else {
+        Warn-Log "Could not create scheduled task. Enable manually: ggnmem autostart enable"
+    }
+} catch {
+    Warn-Log "Could not create scheduled task: $($_.Exception.Message)"
+}
+
 # ─── 15. Start daemon ───────────────────────────────────────────────────────
 
 Step-Log "Starting daemon..."
 
 try {
-    $startOutput = & $cliBin start 2>&1
-    Start-Sleep -Seconds 2
+    # Start daemon via CLI in background (don't block on output)
+    $startProc = Start-Process -FilePath $cliBin -ArgumentList "start" -PassThru -WindowStyle Hidden
 
-    $daemonProc = Get-Process -Name "ggnmem-daemon" -ErrorAction SilentlyContinue
-    if ($daemonProc) {
+    # Wait up to 10 seconds for daemon process to appear
+    $timeout = 10
+    $elapsed = 0
+    $daemonFound = $false
+
+    while ($elapsed -lt $timeout) {
+        Start-Sleep -Seconds 1
+        $elapsed++
+        $daemonProc = Get-Process -Name "ggnmem-daemon" -ErrorAction SilentlyContinue
+        if ($daemonProc) {
+            $daemonFound = $true
+            break
+        }
+    }
+
+    # Ensure the start command itself finished
+    if (-not $startProc.HasExited) {
+        $startProc | Stop-Process -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($daemonFound) {
         Ok-Log "Daemon started (PID: $($daemonProc.Id))"
     } else {
-        Warn-Log "Daemon may not have started. Run 'ggnmem start' manually."
+        Warn-Log "Daemon did not start within ${timeout}s. Run 'ggnmem start' manually."
     }
 } catch {
     Warn-Log "Could not start daemon: $($_.Exception.Message)"

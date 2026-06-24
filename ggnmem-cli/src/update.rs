@@ -287,7 +287,7 @@ fn extract_step(
     }
     std::fs::create_dir_all(extract_dir).context("Failed to create extraction directory")?;
 
-    if let Err(e) = extract_tar_gz(dest_path, extract_dir) {
+    if let Err(e) = extract_archive(dest_path, extract_dir) {
         let _ = std::fs::remove_dir_all(extract_dir);
         bail!("Extraction failed: {}", e);
     }
@@ -303,15 +303,14 @@ fn extract_step(
     println!("Extraction finished");
 
     if verbose {
+        #[cfg(windows)]
+        let expected_files = ["ggnmem.exe", "ggnmem-daemon.exe", "VERSION", "checksums.txt"];
+        #[cfg(unix)]
+        let expected_files = ["ggnmem", "ggnmem-daemon", "install.sh", "VERSION"];
+
         println!("\nArchive extracted successfully\n");
         println!("Found:");
-        for f in &[
-            "ggnmem",
-            "ggnmem-daemon",
-            "install.sh",
-            "VERSION",
-            "checksums.txt",
-        ] {
+        for f in &expected_files {
             println!("✓ {}", f);
         }
         println!("\nBundle version: {}", bundle_version);
@@ -368,8 +367,8 @@ fn perform_install(
     }
 
     println!("Installing update...");
-    let extracted_ggnmem = extract_dir.join("ggnmem");
-    let extracted_daemon = extract_dir.join("ggnmem-daemon");
+    let extracted_ggnmem = extract_dir.join(cli_name);
+    let extracted_daemon = extract_dir.join(daemon_name);
 
     let install_result = (|| -> Result<()> {
         std::fs::copy(&extracted_ggnmem, &ggnmem_bin).context("Failed to copy ggnmem binary")?;
@@ -430,6 +429,24 @@ fn perform_install(
     println!("Previous version: {}", previous_version);
     println!("Current version:  {}", current_version);
 
+    // Show preserved data.
+    println!();
+    println!("  preserved:");
+    if let Ok(p) = crate::config::config_path() {
+        if p.exists() {
+            println!("  ✓ config   ({})", p.display());
+        }
+    }
+    let db_path = crate::default_db_path();
+    if db_path.exists() {
+        println!("  ✓ database ({})", db_path.display());
+    }
+    if let Some(mdir) = ggnmem_paths::models_dir() {
+        if mdir.exists() {
+            println!("  ✓ models   ({})", mdir.display());
+        }
+    }
+
     Ok(())
 }
 
@@ -441,6 +458,37 @@ fn run_silent_cmd(args: &[&str]) {
             .stderr(std::process::Stdio::null())
             .status();
     }
+}
+
+/// Extract an archive (.zip or .tar.gz) to the target directory.
+///
+/// On Windows, `.zip` files are extracted via PowerShell `Expand-Archive`.
+/// On all platforms, `.tar.gz` files are extracted via the `tar` command.
+fn extract_archive(archive_path: &std::path::Path, extract_dir: &std::path::Path) -> Result<()> {
+    let name = archive_path.to_string_lossy();
+
+    if name.ends_with(".zip") {
+        // Use PowerShell Expand-Archive for .zip files (works on Windows).
+        let status = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                    archive_path.display(),
+                    extract_dir.display()
+                ),
+            ])
+            .status()
+            .context("Failed to run PowerShell Expand-Archive")?;
+
+        if !status.success() {
+            bail!("Failed to extract ZIP archive");
+        }
+    } else {
+        extract_tar_gz(archive_path, extract_dir)?;
+    }
+    Ok(())
 }
 
 fn extract_tar_gz(archive_path: &std::path::Path, extract_dir: &std::path::Path) -> Result<()> {
@@ -462,6 +510,9 @@ fn validate_extracted_bundle(
     extract_dir: &std::path::Path,
     expected_version: &str,
 ) -> Result<String> {
+    #[cfg(windows)]
+    let required_files = ["ggnmem.exe", "ggnmem-daemon.exe", "VERSION", "checksums.txt"];
+    #[cfg(unix)]
     let required_files = [
         "ggnmem",
         "ggnmem-daemon",

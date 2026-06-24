@@ -783,7 +783,11 @@ async fn doctor() -> Result<()> {
     print!("autostart       ... ");
     #[cfg(windows)]
     {
-        println!("— not yet supported on Windows");
+        if service::is_autostart_enabled() {
+            println!("✓ enabled");
+        } else {
+            println!("✗ disabled (ggnmem autostart enable)");
+        }
     }
     #[cfg(unix)]
     {
