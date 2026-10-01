@@ -1,20 +1,54 @@
+# ─── Rust / Cargo ────────────────────────────────────────────────────────────
 /target/
 /release/
-/mkdir/
-/export/
+**/*.rs.bk
+*.pdb
+
+# ─── SQLite databases ────────────────────────────────────────────────────────
 **/*.db
 **/*.db-shm
 **/*.db-wal
 *.sqlite
 *.sqlite3
+
+# ─── ONNX / AI models ────────────────────────────────────────────────────────
+*.onnx
+*.ort
+
+# ─── Archives / binaries ─────────────────────────────────────────────────────
 *.tar.gz
 *.zip
 *.exe
-*.pdb
+
+# ─── Build / release artifacts ────────────────────────────────────────────────
+/mkdir/
+/export/
 RELEASE_NOTES.md
 checksums.txt
+
+# ─── OS files ─────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ─── Editor / IDE ─────────────────────────────────────────────────────────────
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
+
+# ─── Temporary files ─────────────────────────────────────────────────────────
+temp.rs
+*.tmp
+*.bak
+
+# ─── Agent-generated docs (not committed) ─────────────────────────────────────
 docs/agent_memory.md
 docs/environment.md
 docs/Skills.md
 
-temp.rs
+# ─── Environment / secrets ────────────────────────────────────────────────────
+.env
+.env.*
