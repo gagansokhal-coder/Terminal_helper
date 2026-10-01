@@ -167,6 +167,21 @@ See [docs/roadmap.md](docs/roadmap.md) for full details.
 
 ---
 
+## Contributing
+
+We welcome contributions from everyone — including first-time contributors and students!
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for:
+*   Development setup and workflow
+*   Code style and testing guidelines
+*   How to open a pull request
+
+Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
+
+For security issues, see [SECURITY.md](SECURITY.md).
+
+---
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
