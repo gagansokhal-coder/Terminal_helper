@@ -80,6 +80,22 @@ ggnmem status
 ggnmem import auto
 ```
 
+### 4. First Searches
+
+```bash
+ggnmem search docker
+ggnmem search postgres
+ggnmem semantic "git branch"
+```
+
+### 5. Natural Language Examples
+
+```bash
+ggnmem ask "show running containers"
+ggnmem ask "create postgres backup"
+ggnmem ask "find cargo commands"
+```
+
 ---
 
 ## Example Usage

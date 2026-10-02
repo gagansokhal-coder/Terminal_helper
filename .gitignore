@@ -48,6 +48,17 @@ temp.rs
 docs/agent_memory.md
 docs/environment.md
 docs/Skills.md
+docs/AGENT_HANDOFF.md
+docs/install-online-design.md
+docs/installer-flow.md
+docs/phase23-installer-plan.md
+docs/phase-26-windows-installer-plan.md
+docs/readme-hero.md
+docs/readme-plan.md
+docs/screenshots-plan.md
+docs/project.md
+docs/starter-issues.md
+docs/readme-quickstart.md
 
 # ─── Environment / secrets ────────────────────────────────────────────────────
 .env
