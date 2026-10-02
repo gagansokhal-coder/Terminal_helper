@@ -95,6 +95,20 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
+  # ─── Shell installer regression tests ───────────────────────────────────────
+  shell-tests:
+    name: Shell installer tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Lint install-online.sh
+        run: shellcheck scripts/install-online.sh scripts/test_install_online.sh
+
+      - name: Run installer regression tests
+        run: bash scripts/test_install_online.sh
+
   # ─── Release build check ────────────────────────────────────────────────────
   build:
     name: Build (release)
