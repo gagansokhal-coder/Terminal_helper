@@ -1,5 +1,12 @@
 # Setup
 
+## GitHub Actions-only installation
+
+If the repository must not use AI, install with the bootstrap script's
+`-WithoutCopilot` option. It excludes both the Copilot workflow and Copilot
+instructions. The inspection, labels, assignment, maintenance, PR-policy, and
+merge-gate workflows remain GitHub Actions-only.
+
 ## 1. Review and merge the bootstrap pull request
 
 Merge this automation only through a normal pull request. Do not push it to

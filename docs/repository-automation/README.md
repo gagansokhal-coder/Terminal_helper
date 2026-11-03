@@ -34,6 +34,13 @@ repository against another local Git checkout:
 pwsh -File .\tools\repository-automation\bootstrap.ps1 -TargetPath C:\src\another-repository
 ```
 
+For a GitHub Actions-only installation with no Copilot workflow or Copilot
+instructions, add `-WithoutCopilot`:
+
+```powershell
+pwsh -File .\tools\repository-automation\bootstrap.ps1 -TargetPath C:\src\another-repository -WithoutCopilot
+```
+
 The script copies only the automation files, refuses to overwrite existing
 files unless `-Force` is supplied, and creates a separate branch in the target
 repository. It never commits, pushes, changes the default branch, or changes

@@ -4,6 +4,7 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$TargetPath,
     [string]$BranchName = 'automation-bootstrap',
+    [switch]$WithoutCopilot,
     [switch]$Force
 )
 
@@ -52,13 +53,11 @@ if (git -C $targetRoot show-ref --verify --quiet "refs/heads/$BranchName") { thr
 git -C $targetRoot checkout -b $BranchName
 
 $files = @(
-    '.github\copilot-instructions.md',
     '.github\workflows\repository-automation-inspect.yml',
     '.github\workflows\repository-automation-labels.yml',
     '.github\workflows\repository-automation-assignment.yml',
     '.github\workflows\repository-automation-pr-policy.yml',
     '.github\workflows\repository-automation-maintenance.yml',
-    '.github\workflows\repository-automation-copilot.yml',
     '.github\workflows\repository-automation-merge-gate.yml',
     '.github\repository-automation\schema.json',
     'tools\repository-automation\inspect.mjs',
@@ -70,6 +69,12 @@ $files = @(
     'tools\repository-automation\merge-gate.mjs',
     'tools\repository-automation\lib\common.mjs'
 )
+if (-not $WithoutCopilot) {
+    $files += @(
+        '.github\copilot-instructions.md',
+        '.github\workflows\repository-automation-copilot.yml'
+    )
+}
 foreach ($file in $files) { Copy-AutomationFile $file }
 
 $docsSource = Join-Path $toolkitRoot 'docs\repository-automation'
@@ -97,4 +102,5 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $configPath) | Out
 $config | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $configPath -Encoding utf8
 
 Write-Host "Installed Repository Automation on branch '$BranchName'."
+if ($WithoutCopilot) { Write-Host 'Copilot files were excluded; this installation uses GitHub Actions only.' }
 Write-Host 'Review the changes, run tests, then commit and open a pull request. No commit, push, repository setting, issue, or merge was performed.'
