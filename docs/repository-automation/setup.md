@@ -4,6 +4,16 @@ This guide walks you through setting up and configuring the autonomous repositor
 
 ---
 
+## Actions-Only Installation (Without AI)
+
+If a repository must not use AI or Copilot, install with the `--without-copilot` flag:
+```bash
+node tools/repository-automation/bootstrap.mjs --target /path/to/repo --without-copilot
+```
+This excludes both the Copilot workflow and Copilot instructions. All health inspection, taxonomy labels, contributor assignment, maintenance, PR-policy, and merge-gate workflows remain 100% standard GitHub Actions with zero AI dependencies.
+
+---
+
 ## 1. Prerequisites & Repository Settings
 
 In your GitHub repository under **Settings → Actions → General**:
