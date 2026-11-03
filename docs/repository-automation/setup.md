@@ -18,7 +18,7 @@ Create these repository variables, not secrets:
 | --- | --- | --- |
 | `REPOSITORY_AUTOMATION_ISSUE_WRITES` | `false` | Allows verified inspection findings to open issues only when `true`. |
 | `REPOSITORY_AUTOMATION_AUTOMERGE` | `false` | Enables the auto-merge gate only when `true`. Leave false until separately approved. |
-| `REPOSITORY_AUTOMATION_COPILOT` | `false` | Enables optional Copilot CLI analysis only when `true`. |
+| `REPOSITORY_AUTOMATION_COPILOT` | `false` | Enables the recurring optional Copilot CLI analysis schedule when `true`. Manual report-only runs remain available. |
 
 ## 3. Labels
 
@@ -35,10 +35,14 @@ for Actions. The workflow then uses the short-lived `GITHUB_TOKEN` with
 
 For a personal repository, add a repository Actions secret named
 `COPILOT_GITHUB_TOKEN`. It must be a fine-grained GitHub token with only the
-**Copilot Requests: Read** permission, limited to this repository wherever the
-GitHub token UI permits. Never use that token for Git writes and never print it.
+**Copilot Requests** account permission enabled, limited to this repository
+wherever the GitHub token UI permits. Never use that token for Git writes and
+never print it.
 
-Set `REPOSITORY_AUTOMATION_COPILOT=true` only after a manual dry run succeeds.
+Run **Repository Automation — Copilot analysis** manually after adding the
+secret. It is report-only and does not need the repository variable. Set
+`REPOSITORY_AUTOMATION_COPILOT=true` only after that manual run succeeds and
+you want the weekly schedule enabled.
 Copilot cloud automations and automatic Copilot code review are separate paid
 features; this optional workflow uses Copilot CLI in Actions instead.
 
