@@ -1,62 +1,92 @@
-# Setup
+# Setup & Configuration Guide
 
-## 1. Review and merge the bootstrap pull request
+This guide walks you through setting up and configuring the autonomous repository management system for this repository or any new repository bootstrapped with the toolkit.
 
-Merge this automation only through a normal pull request. Do not push it to
-`main` directly. The existing CI and release workflows are preserved.
+---
 
-## 2. Repository settings
+## 1. Prerequisites & Repository Settings
 
-In **Settings → Actions → General**, allow Actions to use the permissions
-required by the workflows, then rely on each workflow's explicit minimal
-`permissions` declaration. Enable **Issues**, **Actions**, and (optionally)
-**Discussions** for the repository.
+In your GitHub repository under **Settings → Actions → General**:
+1. **Workflow permissions:** Set to **Read and write permissions** so that explicitly scoped jobs can manage issues and PR comments.
+2. **Pull request creation:** Keep **Allow GitHub Actions to create and approve pull requests** *unchecked* (disabled) for least privilege.
 
-Create these repository variables, not secrets:
+---
 
-| Variable | Initial value | Effect |
+## 2. Repository Variables (Guardrails)
+
+Configure these repository variables under **Settings → Secrets and variables → Actions → Variables**:
+
+| Variable Name | Recommended Initial Value | Purpose & Effect |
 | --- | --- | --- |
-| `REPOSITORY_AUTOMATION_ISSUE_WRITES` | `false` | Allows verified inspection findings to open issues only when `true`. |
-| `REPOSITORY_AUTOMATION_AUTOMERGE` | `false` | Enables the auto-merge gate only when `true`. Leave false until separately approved. |
-| `REPOSITORY_AUTOMATION_COPILOT` | `false` | Enables the recurring optional Copilot CLI analysis schedule when `true`. Manual report-only runs remain available. |
+| `REPOSITORY_AUTOMATION_ISSUE_WRITES` | `false` | When `false`, health inspections run in dry-run mode and generate report artifacts. Set to `true` to allow verified failures to open GitHub issues automatically. |
+| `REPOSITORY_AUTOMATION_AUTOMERGE` | `false` | When `false`, the auto-merge gate is dormant. Keep `false` until branch protection is configured and owner approves. |
+| `REPOSITORY_AUTOMATION_COPILOT` | `false` | Controls the weekly scheduled Copilot CLI analysis run. Set to `true` after verifying a manual run. |
 
-## 3. Labels
+---
 
-Run **Repository Automation — Initialize labels** manually once after merging.
-It creates the documented labels if absent: `good first issue`, `beginner`,
-`intermediate`, `advanced`, `bug`, `enhancement`, `documentation`,
-`performance`, `security`, `testing`, `NSOC`, and `status: in progress`.
+## 3. GitHub Copilot Configuration (Student Developer Pack & Pro)
 
-## 4. Copilot (optional)
+### For Personal Repositories (GitHub Student Developer Pack / Pro / Individual):
+GitHub Student Developer Pack includes personal Copilot access. In a personal repository, GitHub Actions runs Copilot CLI by providing a personal access token with Copilot permissions:
 
-For an organization-owned repository, an owner can enable Copilot CLI billing
-for Actions. The workflow then uses the short-lived `GITHUB_TOKEN` with
-`copilot-requests: write` and requires no stored credential.
+1. Go to **GitHub Settings → Developer settings → Personal access tokens → Fine-grained tokens**.
+2. Create a token scoped to your user account.
+3. Under **Permissions**, grant:
+   - **Copilot Requests:** Read (or Read and Write).
+4. Do NOT grant broad repository admin, code write, or secret permissions.
+5. In your repository, go to **Settings → Secrets and variables → Actions → Secrets**.
+6. Add a new repository secret:
+   - Name: `COPILOT_GITHUB_TOKEN`
+   - Secret: `<your-fine-grained-copilot-token>`
+7. Test the integration: Go to **Actions → Repository Automation — Copilot analysis → Run workflow**.
+8. Confirm the run completes successfully and downloads the `copilot-maintenance-report` artifact (as verified in run `#41601254578`).
 
-For a personal repository, add a repository Actions secret named
-`COPILOT_GITHUB_TOKEN`. It must be a fine-grained GitHub token with only the
-**Copilot Requests** account permission enabled, limited to this repository
-wherever the GitHub token UI permits. Never use that token for Git writes and
-never print it.
+### For Organization-Owned Repositories:
+If the repository is transferred to an organization with Copilot Business/Enterprise, an owner can check **Allow use of Copilot CLI billed to the organization** in org settings. The workflow will then automatically use the default `GITHUB_TOKEN` without requiring a stored secret.
 
-Run **Repository Automation — Copilot analysis** manually after adding the
-secret. It is report-only and does not need the repository variable. Set
-`REPOSITORY_AUTOMATION_COPILOT=true` only after that manual run succeeds and
-you want the weekly schedule enabled.
-Copilot cloud automations and automatic Copilot code review are separate paid
-features; this optional workflow uses Copilot CLI in Actions instead.
+---
 
-## 5. Auto-merge (optional, owner approval required)
+## 4. Initializing Taxonomy Labels
 
-Keep `REPOSITORY_AUTOMATION_AUTOMERGE=false` unless the owner has explicitly
-approved auto-merge. Before enabling it:
+After merging the automation branch into your default branch (`main`):
+1. Navigate to the **Actions** tab in GitHub.
+2. Select **Repository Automation — Initialize labels**.
+3. Click **Run workflow**.
+4. This idempotently creates all necessary labels:
+   - `good first issue`, `beginner`, `intermediate`, `advanced`
+   - `bug`, `enhancement`, `documentation`, `performance`, `security`, `testing`
+   - `NSOC`, `status: in progress`
 
-1. Protect `main`: require a pull request, passing required checks, resolved
-   conversations, and at least one independent approval.
-2. Disallow force pushes and branch-deletion bypasses.
-3. Enable squash merging and GitHub auto-merge in repository settings.
-4. Make the existing `CI / Formatting`, `CI / Clippy`, `CI / Tests`, and
-   `CI / Build (release)` checks required.
+---
 
-The automation requests GitHub auto-merge only; it does not bypass a rule,
-directly merge a pull request, or force-push.
+## 5. Setting up Branch Protection for `main`
+
+Before setting `REPOSITORY_AUTOMATION_AUTOMERGE=true`:
+1. Go to **Settings → Rules → Rulesets** (or **Settings → Branches**).
+2. Create a ruleset targeting `main`.
+3. Configure the following rules:
+   - **Require a pull request before merging:** Require at least 1 approval; dismiss stale approvals when new commits are pushed.
+   - **Require status checks to pass:** Add required status checks:
+     - `Formatting`
+     - `Clippy`
+     - `Tests`
+     - `Build (release)`
+     - `PR policy`
+   - **Require conversation resolution:** Enabled.
+   - **Block force pushes:** Enabled.
+   - **Block branch deletions:** Enabled.
+   - **Do not allow bypass:** Ensure no users or apps can bypass the rules.
+
+---
+
+## 6. One-Step Deployment to Another Repository
+
+To automate another repository:
+```bash
+# On any OS:
+node tools/repository-automation/bootstrap.mjs --target /path/to/another-repo
+
+# Then in the target repository:
+git push -u origin automation-bootstrap
+# Open PR, review, merge, and initialize labels!
+```
