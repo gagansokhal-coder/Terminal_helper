@@ -115,7 +115,9 @@ export function githubClient({ token, repository, fetchImpl = fetch }) {
     if (response.status === 204) return null;
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(`GitHub API ${options.method ?? 'GET'} ${path} failed (${response.status}): ${body.message ?? 'unknown error'}`);
+      const error = new Error(`GitHub API ${options.method ?? 'GET'} ${path} failed (${response.status}): ${body.message ?? 'unknown error'}`);
+      error.status = response.status;
+      throw error;
     }
     return body;
   }

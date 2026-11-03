@@ -25,6 +25,9 @@ write code, issues, or pull requests.
   fetches the live issue state before checking that it is open, labelled for
   assignment, unassigned, and that the requester is below the configured
   open-assignment limit before writing.
+- Before assignment, the workflow asks GitHub whether the requester is an
+  eligible repository assignee. An ineligible requester receives contribution
+  guidance and no assignment write is attempted.
 - Comment-triggered workflows treat all issue and comment text as untrusted
   data. They do not interpolate it into shell commands.
 - Fork pull-request code runs only in the existing read-only CI workflow.
