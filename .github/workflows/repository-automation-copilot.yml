@@ -15,15 +15,26 @@ permissions:
 
 jobs:
   analyze:
-    if: vars.REPOSITORY_AUTOMATION_COPILOT == 'true'
+    # A maintainer can make a deliberate, report-only manual run without
+    # enabling the recurring schedule. Scheduled runs remain explicitly opt-in.
+    if: github.event_name == 'workflow_dispatch' || vars.REPOSITORY_AUTOMATION_COPILOT == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 2
           persist-credentials: false
       - name: Install Copilot CLI
         run: npm install --global @github/copilot
+      - name: Validate Copilot credential
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+        run: |
+          if [ -z "$COPILOT_GITHUB_TOKEN" ]; then
+            echo "::error::Missing COPILOT_GITHUB_TOKEN. Add the fine-grained Copilot Requests token as a repository Actions secret."
+            exit 1
+          fi
       - name: Produce a read-only maintenance report
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
