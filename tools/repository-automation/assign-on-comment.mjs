@@ -45,6 +45,14 @@ if (assigned.total_count >= config.assignment.max_open_assignments_per_contribut
   process.exit(0);
 }
 
+try {
+  await client.request(`/repos/${client.repository}/assignees/${encodeURIComponent(actor)}`);
+} catch (error) {
+  if (error.status !== 404) throw error;
+  await comment(`Thanks for offering to help. GitHub does not currently list @${actor} as an eligible assignee for this repository, so I left this issue unassigned. You can still contribute by forking the repository, opening a focused pull request that links #${issue.number}, and commenting with progress. A maintainer can make you eligible in GitHub first if formal assignment is needed.`);
+  process.exit(0);
+}
+
 await client.request(`/repos/${client.repository}/issues/${issue.number}/assignees`, {
   method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ assignees: [actor] }),
 });

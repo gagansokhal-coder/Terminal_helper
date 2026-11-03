@@ -20,7 +20,7 @@ function currentIssue({ assignees = [] } = {}) {
   return { number: 41, state: 'open', assignees, labels: [{ name: 'NSOC' }] };
 }
 
-async function runAssignment({ payload, current, searchCount = 0 }) {
+async function runAssignment({ payload, current, searchCount = 0, assigneeEligible = true }) {
   const directory = await mkdtemp(join(tmpdir(), 'assignment-test-'));
   const eventPath = join(directory, 'event.json');
   const preloadPath = join(directory, 'mock-fetch.mjs');
@@ -36,6 +36,10 @@ async function runAssignment({ payload, current, searchCount = 0 }) {
       const body = String(url).includes('/search/issues') ? { total_count: ${searchCount} }
         : (method === 'GET' && /\\/issues\\/41$/.test(String(url))) ? current
         : { number: 1, html_url: 'https://example.invalid/1' };
+      if (method === 'GET' && String(url).includes('/assignees/')) {
+        return ${assigneeEligible} ? new Response(null, { status: 204 })
+          : new Response(JSON.stringify({ message: 'Not Found' }), { status: 404, headers: { 'content-type': 'application/json' } });
+      }
       return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
     };
     process.on('exit', () => writeFileSync(${JSON.stringify(callsPath)}, JSON.stringify(calls)));
@@ -88,6 +92,17 @@ test('permits one eligible assignment', async () => {
   const calls = await runAssignment({ payload: event(), current: currentIssue() });
   assert.equal(writesToAssignees(calls).length, 1);
   assert.equal(calls.filter((call) => call.method === 'POST' && call.url.includes('/labels')).length, 1);
+});
+
+test('does not assign a contributor GitHub reports as ineligible', async () => {
+  const calls = await runAssignment({
+    payload: event(),
+    current: currentIssue(),
+    assigneeEligible: false,
+  });
+  assert.equal(calls.filter((call) => call.method === 'GET' && call.url.includes('/assignees/student')).length, 1);
+  assert.equal(writesToAssignees(calls).length, 0);
+  assert.equal(calls.filter((call) => call.method === 'POST' && call.url.includes('/comments')).length, 1);
 });
 
 test('rejects a stale queued request when the issue was assigned by the prior run', async () => {
