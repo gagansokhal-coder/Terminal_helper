@@ -47,6 +47,10 @@ export function issueMarker(id) {
   return `<!-- repository-automation:fingerprint=${id} -->`;
 }
 
+export function hasDuplicateSearchResult(search) {
+  return Number(search?.total_count) > 0;
+}
+
 export function assignmentMarker(login, timestamp) {
   return `<!-- repository-automation:assignment assignee=${login} assigned_at=${timestamp} -->`;
 }

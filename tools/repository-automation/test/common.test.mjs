@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildIssueBody, fingerprint, hasAssignableLabel, isAssignmentRequest, redact } from '../lib/common.mjs';
+import { buildIssueBody, fingerprint, hasAssignableLabel, hasDuplicateSearchResult, isAssignmentRequest, redact } from '../lib/common.mjs';
 
 test('redacts common token formats', () => {
   assert.match(redact('token=abc123 github_pat_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234'), /\[REDACTED\]/);
@@ -23,4 +23,11 @@ test('generated issue bodies keep a stable duplicate marker', () => {
   const body = buildIssueBody({ fingerprint: id, name: 'Tests', command: ['cargo', 'test'], exitCode: 1, output: 'failed' });
   assert.match(body, new RegExp(`fingerprint=${id}`));
   assert.match(body, /Acceptance criteria/);
+});
+
+test('duplicate detection requires a matching issue or pull request', () => {
+  assert.equal(hasDuplicateSearchResult({ total_count: 0 }), false);
+  assert.equal(hasDuplicateSearchResult({ total_count: 1 }), true);
+  assert.equal(hasDuplicateSearchResult({ total_count: '2' }), true);
+  assert.equal(hasDuplicateSearchResult({}), false);
 });

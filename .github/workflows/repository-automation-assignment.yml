@@ -8,6 +8,12 @@ permissions:
   contents: read
   issues: write
 
+concurrency:
+  # Serialize requests for one issue so simultaneous comments cannot cause
+  # conflicting assignments or duplicate status messages.
+  group: repository-automation-assignment-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
 jobs:
   assign:
     if: github.event.issue.pull_request == null
