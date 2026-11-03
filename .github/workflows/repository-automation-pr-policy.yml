@@ -22,4 +22,10 @@ jobs:
       - name: Publish policy feedback without executing PR code
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node tools/repository-automation/pr-policy.mjs
+        run: |
+          script_path="tools/repository-automation/pr-policy.mjs"
+          if [ ! -f "$script_path" ]; then
+            echo "Skipping policy feedback: $script_path not found on default branch checkout."
+            exit 0
+          fi
+          node "$script_path"
