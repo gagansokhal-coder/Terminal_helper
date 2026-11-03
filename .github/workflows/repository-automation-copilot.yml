@@ -1,0 +1,38 @@
+name: Repository Automation — Copilot analysis
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '29 5 * * 1'
+
+concurrency:
+  group: repository-automation-copilot
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  copilot-requests: write
+
+jobs:
+  analyze:
+    if: vars.REPOSITORY_AUTOMATION_COPILOT == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Copilot CLI
+        run: npm install --global @github/copilot
+      - name: Produce a read-only maintenance report
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p automation-output
+          copilot -p "Read docs/PROJECT-STATUS.md, CONTRIBUTING.md, SECURITY.md, .github/repository-automation/config.json, and the current git diff from the default branch. Produce a concise Markdown maintenance report. Distinguish verified evidence from suggestions. Do not modify files, create issues, comment, or disclose secrets." -s --allow-tool='shell(git diff:*)' --allow-tool='shell(git log:*)' > automation-output/copilot-maintenance-report.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: copilot-maintenance-report
+          path: automation-output/copilot-maintenance-report.md
+          retention-days: 14

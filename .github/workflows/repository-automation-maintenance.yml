@@ -1,0 +1,26 @@
+name: Repository Automation — Assignment maintenance
+
+on:
+  schedule:
+    - cron: '11 4 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: repository-automation-maintenance
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  maintain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Remind or release inactive assignments
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tools/repository-automation/maintain-assignments.mjs

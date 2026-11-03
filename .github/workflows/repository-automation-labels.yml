@@ -1,0 +1,20 @@
+name: Repository Automation — Initialize labels
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  initialize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Create missing automation labels
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tools/repository-automation/initialize-labels.mjs

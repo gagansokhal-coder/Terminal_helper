@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Repository Automation configuration",
+  "type": "object",
+  "required": ["version", "project", "inspection", "issues", "assignment", "pull_requests"],
+  "properties": {
+    "version": { "const": 1 },
+    "project": { "type": "object", "required": ["name", "default_branch"] },
+    "inspection": { "type": "object", "required": ["commands"] },
+    "issues": { "type": "object", "required": ["max_per_run"] },
+    "assignment": { "type": "object", "required": ["max_open_assignments_per_contributor"] },
+    "pull_requests": { "type": "object", "required": ["sensitive_path_prefixes"] }
+  }
+}

@@ -1,0 +1,23 @@
+name: Repository Automation — Contributor assignment
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  assign:
+    if: github.event.issue.pull_request == null
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Evaluate assignment request
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tools/repository-automation/assign-on-comment.mjs

@@ -1,0 +1,71 @@
+name: Repository Automation — Inspect
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_issues:
+        description: Publish verified issue candidates (requires the repository variable too)
+        type: boolean
+        default: false
+        required: false
+  schedule:
+    - cron: '17 2 * * *'
+    - cron: '43 3 * * 1'
+
+# Job-level permissions below grant only the scopes each job needs.
+permissions: {}
+
+concurrency:
+  group: repository-automation-inspect
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    name: Run configured verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: read
+      vulnerability-alerts: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Inspect repository
+        run: node tools/repository-automation/inspect.mjs
+      - name: Upload inspection report
+        uses: actions/upload-artifact@v4
+        with:
+          name: repository-inspection-report
+          path: automation-output/inspection-report.json
+          retention-days: 30
+      - name: Write job summary
+        run: |
+          node -e "const r=require('./automation-output/inspection-report.json'); console.log('## Repository inspection\n\n'+r.checks.map(x=>'- '+(x.passed?'✅':'❌')+' '+x.name).join('\n')+'\n\nIssue candidates: '+r.candidates.length);" >> "$GITHUB_STEP_SUMMARY"
+
+  publish-issues:
+    name: Publish verified issue candidates
+    needs: inspect
+    if: vars.REPOSITORY_AUTOMATION_ISSUE_WRITES == 'true' && (github.event_name == 'schedule' || inputs.publish_issues)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: repository-inspection-report
+          path: automation-output
+      - name: Publish verified findings only
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PUBLISH_ISSUES: true
+          REPOSITORY_AUTOMATION_ISSUE_WRITES: ${{ vars.REPOSITORY_AUTOMATION_ISSUE_WRITES }}
+        run: node tools/repository-automation/publish-issues.mjs

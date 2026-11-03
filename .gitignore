@@ -1,5 +1,6 @@
 # ─── Rust / Cargo ────────────────────────────────────────────────────────────
 /target/
+/automation-output/
 /release/
 **/*.rs.bk
 *.pdb

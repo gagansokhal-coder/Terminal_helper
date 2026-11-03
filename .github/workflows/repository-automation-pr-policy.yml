@@ -1,0 +1,25 @@
+name: Repository Automation — Pull request policy
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  policy:
+    # Fork PR tokens are read-only. CI still runs there; this advisory comment
+    # is deliberately limited to same-repository branches.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Publish policy feedback without executing PR code
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tools/repository-automation/pr-policy.mjs
