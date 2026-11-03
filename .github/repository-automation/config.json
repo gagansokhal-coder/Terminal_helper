@@ -1,0 +1,55 @@
+{
+  "$schema": "./schema.json",
+  "version": 1,
+  "project": {
+    "name": "ggnmem",
+    "default_branch": "main"
+  },
+  "inspection": {
+    "max_issue_candidates": 3,
+    "commands": [
+      {
+        "id": "format",
+        "name": "Rust formatting check",
+        "argv": ["cargo", "fmt", "--all", "--", "--check"]
+      },
+      {
+        "id": "clippy",
+        "name": "Rust lint check",
+        "argv": ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]
+      },
+      {
+        "id": "test",
+        "name": "Rust workspace tests",
+        "argv": ["cargo", "test", "--workspace"]
+      },
+      {
+        "id": "build",
+        "name": "Rust release build",
+        "argv": ["cargo", "build", "--release", "--workspace"]
+      }
+    ]
+  },
+  "issues": {
+    "enabled_by_default": false,
+    "labels": ["bug", "testing", "NSOC"],
+    "max_per_run": 3
+  },
+  "assignment": {
+    "enabled_by_default": true,
+    "max_open_assignments_per_contributor": 1,
+    "assignable_labels": ["good first issue", "beginner", "intermediate", "advanced", "NSOC"],
+    "reminder_after_days": 7,
+    "unassign_after_days": 14
+  },
+  "pull_requests": {
+    "sensitive_path_prefixes": [
+      ".github/workflows/",
+      ".github/repository-automation/",
+      "scripts/install",
+      "install.sh",
+      "install.ps1",
+      "Dockerfile"
+    ]
+  }
+}
