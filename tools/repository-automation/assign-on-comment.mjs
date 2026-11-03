@@ -3,16 +3,20 @@ import { assignmentMarker, githubClient, hasAssignableLabel, isAssignmentRequest
 
 const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, 'utf8'));
 const config = JSON.parse(await readFile('.github/repository-automation/config.json', 'utf8'));
-const issue = event.issue;
+const eventIssue = event.issue;
 const actor = event.comment?.user?.login;
 const request = event.comment?.body ?? '';
 
-if (!config.assignment.enabled_by_default || !issue || !actor || !isAssignmentRequest(request)) {
+if (!config.assignment.enabled_by_default || !eventIssue || !actor || !isAssignmentRequest(request)) {
   console.log('Comment is not an enabled assignment request.');
   process.exit(0);
 }
 
 const client = githubClient({ token: process.env.GITHUB_TOKEN, repository: process.env.GITHUB_REPOSITORY });
+// An issue_comment payload is a point-in-time snapshot. Fetch the issue again
+// after GitHub has serialized this issue's workflow run, so a prior /assign is
+// observed before we decide whether this requester can be assigned.
+const issue = await client.request(`/repos/${client.repository}/issues/${eventIssue.number}`);
 const comment = async (body) => client.request(`/repos/${client.repository}/issues/${issue.number}/comments`, {
   method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body }),
 });

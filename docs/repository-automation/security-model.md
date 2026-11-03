@@ -21,9 +21,10 @@ write code, issues, or pull requests.
 - The publisher searches open and closed issues and pull requests for its
   fingerprint before creating an issue.
 - Maximum issue creation per run is configured and defaults to three.
-- Assignment requests for the same issue are serialized. The workflow checks
-  that the issue is open, labelled for assignment, unassigned, and that the
-  requester is below the configured open-assignment limit before writing.
+- Assignment requests for the same issue are serialized. Each queued run then
+  fetches the live issue state before checking that it is open, labelled for
+  assignment, unassigned, and that the requester is below the configured
+  open-assignment limit before writing.
 - Comment-triggered workflows treat all issue and comment text as untrusted
   data. They do not interpolate it into shell commands.
 - Fork pull-request code runs only in the existing read-only CI workflow.
