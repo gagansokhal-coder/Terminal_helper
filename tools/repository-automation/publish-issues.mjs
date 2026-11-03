@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { buildIssueBody, githubClient, issueMarker, truthy } from './lib/common.mjs';
+import { buildIssueBody, githubClient, hasDuplicateSearchResult, issueMarker, truthy } from './lib/common.mjs';
 
 const reportPath = process.env.AUTOMATION_REPORT_PATH ?? 'automation-output/inspection-report.json';
 const config = JSON.parse(await readFile('.github/repository-automation/config.json', 'utf8'));
@@ -16,7 +16,7 @@ let created = 0;
 for (const candidate of report.candidates.slice(0, config.issues.max_per_run)) {
   const query = encodeURIComponent(`repo:${client.repository} in:body "${issueMarker(candidate.fingerprint)}"`);
   const search = await client.request(`/search/issues?q=${query}&per_page=1`);
-  if (search.total_count > 0) {
+  if (hasDuplicateSearchResult(search)) {
     console.log(`Skipping duplicate finding ${candidate.fingerprint}`);
     continue;
   }
