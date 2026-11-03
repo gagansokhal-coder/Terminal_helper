@@ -198,6 +198,16 @@ For security issues, see [SECURITY.md](SECURITY.md).
 
 ---
 
+## Repository Automation & Maintenance
+
+This repository is autonomously managed and verified using GitHub Actions and GitHub Copilot:
+*   **Project Position & Live Milestones:** [docs/PROJECT-STATUS.md](docs/PROJECT-STATUS.md)
+*   **AI Agent & Maintainer Handoff Guide:** [docs/AGENT-HANDOFF.md](docs/AGENT-HANDOFF.md)
+*   **Repository Automation Architecture & Runbook:** [docs/repository-automation/README.md](docs/repository-automation/README.md)
+*   **One-Step Deployment to Any Repository:** Automate any other repository in one command using `tools/repository-automation/bootstrap.mjs`.
+
+---
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
