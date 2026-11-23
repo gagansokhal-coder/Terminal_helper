@@ -6,6 +6,58 @@
 
 set -euo pipefail
 
+# Usage: install-online.sh [--dry-run]
+# Set GITHUB_TOKEN to authenticate GitHub API calls and avoid rate limits.
+DRY_RUN=0
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run)
+            DRY_RUN=1
+            ;;
+        -h|--help)
+            echo "Usage: install-online.sh [--dry-run]"
+            echo ""
+            echo "  --dry-run   Show what would be downloaded and installed, without changing anything."
+            echo ""
+            echo "Set GITHUB_TOKEN to authenticate GitHub API requests and avoid rate limits."
+            exit 0
+            ;;
+        *)
+            echo "Error: Unknown option $arg"
+            echo "Usage: install-online.sh [--dry-run]"
+            exit 1
+            ;;
+    esac
+done
+
+# 0. Check required commands
+MISSING_CMDS=()
+for cmd in curl tar grep sed awk; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        MISSING_CMDS+=("$cmd")
+    fi
+done
+
+if [ "${#MISSING_CMDS[@]}" -ne 0 ]; then
+    echo "Error: Missing required command(s): ${MISSING_CMDS[*]}"
+    echo "Install them with your package manager and run this script again, for example:"
+    echo "  Debian/Ubuntu: sudo apt-get install ${MISSING_CMDS[*]}"
+    echo "  Fedora:        sudo dnf install ${MISSING_CMDS[*]}"
+    echo "  Arch:          sudo pacman -S ${MISSING_CMDS[*]}"
+    exit 1
+fi
+
+# Remove the temp directory on any exit (success, failure or Ctrl-C), so a
+# partial download never gets left behind.
+TMP_DIR=""
+cleanup() {
+    if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
+        rm -rf "$TMP_DIR"
+    fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
 # 1. Detect platform
 OS="$(uname -s)"
 ARCH="$(uname -m)"
@@ -18,8 +70,18 @@ if [ "$OS" = "Linux" ]; then
     else
         PLATFORM="linux"
     fi
+elif [ "$OS" = "Darwin" ]; then
+    echo "Error: macOS is not supported by this installer yet (no prebuilt macOS release)."
+    echo "You can build ggnmem from source instead:"
+    echo "  1. Install Rust: https://rustup.rs"
+    echo "  2. git clone https://github.com/gagansokhal-coder/Terminal_helper"
+    echo "  3. cd Terminal_helper && cargo build --release"
+    echo "See INSTALL.md for details."
+    exit 1
 else
     echo "Error: Unsupported OS $OS"
+    echo "This installer supports Linux and WSL. On other systems, build from source."
+    echo "See INSTALL.md for details."
     exit 1
 fi
 
@@ -30,6 +92,7 @@ elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     TARGET_ARCH="aarch64"
 else
     echo "Error: Unsupported architecture $ARCH"
+    echo "Prebuilt releases exist for x86_64 and aarch64. Build from source instead, see INSTALL.md."
     exit 1
 fi
 
@@ -41,8 +104,14 @@ echo ""
 REPO="gagansokhal-coder/Terminal_helper"
 API_URL="https://api.github.com/repos/${REPO}/releases"
 
+# Authenticate API calls when GITHUB_TOKEN is set (higher rate limit).
+CURL_AUTH=()
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+    CURL_AUTH=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+fi
+
 echo "DEBUG: Fetching release information from $API_URL..."
-if ! RELEASES_JSON=$(curl -sSL -f "$API_URL" 2>/dev/null); then
+if ! RELEASES_JSON=$(curl -sSL ${CURL_AUTH[@]+"${CURL_AUTH[@]}"} "$API_URL" 2>/dev/null); then
     echo "Error: Failed to fetch releases from GitHub API."
     echo "DEBUG: Ensure you have internet connectivity and can reach api.github.com."
     exit 1
@@ -60,7 +129,14 @@ HAS_MESSAGE=$(echo "$RELEASES_JSON" | grep -c '"message":' || true)
 set -o pipefail
 
 if [ "$HAS_MESSAGE" -gt 0 ] && [[ "$RELEASES_JSON" != *"tag_name"* ]]; then
-    echo "Error: GitHub API returned an error message (possibly rate limiting)."
+    if echo "$RELEASES_JSON" | grep -qi "rate limit"; then
+        echo "Error: GitHub API rate limit exceeded."
+        echo "Unauthenticated requests are limited per IP address. Set a token and try again:"
+        echo "  export GITHUB_TOKEN=<your personal access token>"
+        echo "  ./install-online.sh"
+    else
+        echo "Error: GitHub API returned an error message."
+    fi
     echo "DEBUG: API Response:"
     echo "$RELEASES_JSON" | head -n 10
     exit 1
@@ -128,12 +204,20 @@ if [ -z "$CHECKSUM_URL" ]; then
     exit 1
 fi
 
-# 5. Create temp directory
-TMP_DIR="/tmp/ggnmem-installer"
+if [ "$DRY_RUN" -eq 1 ]; then
+    echo "Dry run: no files will be downloaded or installed."
+    echo "Would download: $ASSET_URL"
+    echo "Would download: $CHECKSUM_URL"
+    echo "Would verify the SHA256 checksum, extract the bundle and run its install.sh"
+    echo "Binaries would be installed under \$HOME/.local/bin"
+    exit 0
+fi
 
-if ! mkdir -p "$TMP_DIR"; then
-    echo "Error: Failed to create temporary directory $TMP_DIR."
-    echo "DEBUG: Check your disk space and permissions."
+# 5. Create temp directory
+if ! TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ggnmem-installer.XXXXXX"); then
+    TMP_DIR=""
+    echo "Error: Failed to create temporary directory."
+    echo "DEBUG: Check your disk space and permissions on ${TMPDIR:-/tmp}."
     exit 1
 fi
 
@@ -219,6 +303,7 @@ mkdir -p "$EXTRACT_DIR"
 
 if ! tar -xzf "$ASSET_PATH" -C "$EXTRACT_DIR"; then
     echo "Error: Failed to extract $ASSET_PATH"
+    echo "DEBUG: The download may be corrupted. Run the installer again to fetch a fresh copy."
     rm -rf "$EXTRACT_DIR"
     exit 1
 fi
@@ -259,6 +344,13 @@ echo "✓ Bundle validation passed"
 echo ""
 
 # 10. Execute installation
+INSTALL_DIR="$HOME/.local/bin"
+if ! mkdir -p "$INSTALL_DIR" 2>/dev/null || [ ! -w "$INSTALL_DIR" ]; then
+    echo "Error: Cannot write to $INSTALL_DIR."
+    echo "Create it and make it writable (mkdir -p $INSTALL_DIR && chmod u+w $INSTALL_DIR), then run this script again."
+    exit 1
+fi
+
 echo "Starting installation..."
 echo "----------------------------------------"
 
