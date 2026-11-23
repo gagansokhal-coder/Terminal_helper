@@ -10,6 +10,12 @@
 /// Used by:
 /// - **Ranking**: penalise any surviving internal commands to `score = 0`.
 /// - **Cleanup**: identify rows to purge from the database.
+///
+/// The first whitespace-separated token of the trimmed command is compared
+/// case-insensitively: `ggnmem`, anything starting with `ggnmem-`, or one of `history`,
+/// `clear`, `exit`, `logout` and `reset` makes it internal. An empty or whitespace-only
+/// string is not internal, and neither is a command that merely mentions these words
+/// later on (such as `echo ggnmem`).
 #[must_use]
 pub fn is_internal_command(command: &str) -> bool {
     let trimmed = command.trim();
@@ -31,6 +37,25 @@ pub fn is_internal_command(command: &str) -> bool {
 
 /// Returns `true` if the command should be ingested, `false` if it should
 /// be silently dropped.
+///
+/// The command is trimmed and the first whitespace-separated token is compared
+/// case-insensitively. It is rejected when:
+/// - it is empty or a single character (accidental keystrokes);
+/// - the first token is `ggnmem` or starts with `ggnmem-`;
+/// - the first token is a shell control command: `exit`, `logout`, `clear`, `reset`,
+///   `history`, `true`, `false`, `:`, `source` or `.`;
+/// - the first token is a navigation command: `cd`, `pushd` or `popd`;
+/// - the first token is an environment command: `export`, `unset`, `set`, `alias`,
+///   `unalias` or `eval`;
+/// - anywhere in the text (case-insensitive) it contains `password=`, `passwd=`,
+///   `secret=`, `token=`, `api_key=` or `apikey=`, which are treated as inline
+///   credentials.
+///
+/// This is a plain substring check, not a full secret detector: a credential written in
+/// another form, such as `--password hunter2`, is not recognized. The input is only
+/// inspected, never modified, so nothing is redacted; a matching command is dropped
+/// whole. Note that [`Database::insert_command`](crate::storage::Database::insert_command)
+/// does not call this, so callers must.
 #[must_use]
 pub fn should_ingest(command: &str) -> bool {
     let trimmed = command.trim();

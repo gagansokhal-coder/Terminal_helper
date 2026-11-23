@@ -14,28 +14,60 @@ use crate::{
 /// Statistics returned after a cleanup operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CleanupStats {
-    /// Number of internal command rows deleted.
+    /// Number of rows removed from `commands` by the cleanup (count before minus count after).
     pub removed: u64,
-    /// Number of commands remaining after cleanup.
+    /// Number of rows left in `commands` once the cleanup has finished.
     pub remaining: u64,
 }
 
+/// Handle to the ggnmem SQLite database.
+///
+/// Wraps a single [`rusqlite::Connection`] and exposes the operations the rest of the
+/// workspace needs: recording sessions and commands, searching them, cleanup and
+/// maintenance, and usage statistics.
+///
+/// # Errors
+///
+/// Unless a method says otherwise, every method returns a [`DbResult`]
+/// and fails with [`DbError::Sqlite`](crate::error::DbError::Sqlite) when the underlying
+/// SQLite call fails (locked database, missing table, constraint violation, and so on).
+/// A method's own `# Errors` section only lists conditions specific to that method.
 pub struct Database {
     connection: Connection,
 }
 
 impl Database {
+    /// Open the database described by `config`.
+    ///
+    /// Opens (or creates) the SQLite file at `config.path`, applies the connection pragmas
+    /// (WAL journal, busy timeout, and so on) and runs any pending schema migrations. See
+    /// [`open_database`](crate::connection::open_database).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError::Sqlite`](crate::error::DbError::Sqlite) if the file cannot be opened
+    /// (for example when the parent directory does not exist) or a pragma fails, and
+    /// [`DbError::Migration`](crate::error::DbError::Migration) if a schema migration fails.
     pub fn open(config: &DatabaseConfig) -> DbResult<Self> {
         Ok(Self {
             connection: connection::open_database(config)?,
         })
     }
 
+    /// Borrow the underlying [`rusqlite::Connection`].
+    ///
+    /// Escape hatch for callers that need to run their own SQL against the ggnmem schema.
+    /// Prefer the typed methods on [`Database`] where one exists.
     #[must_use]
     pub fn connection(&self) -> &Connection {
         &self.connection
     }
 
+    /// Record a new shell session.
+    ///
+    /// The row is written with `INSERT OR IGNORE`, so inserting a session whose id already
+    /// exists is a silent no-op: the stored row is not updated. `created_at_ms` is set to
+    /// `session.started_at_ms` and `ended_at_ms` is left `NULL`.
     pub fn insert_session(&self, session: &NewSession) -> DbResult<()> {
         self.connection.execute(
             r#"
@@ -68,6 +100,29 @@ impl Database {
         Ok(())
     }
 
+    /// Record one executed command, deduplicating by content.
+    ///
+    /// A command's identity is its `content_hash`: a SHA-256 over the whitespace-normalized
+    /// command text and the trimmed `cwd` (see [`crate::hash`]). This method runs three
+    /// statements, one after the other and not inside a transaction:
+    ///
+    /// 1. Insert into `commands`. If a row with the same `content_hash` already exists, that
+    ///    row is kept (its `id`, `session_id` and `created_at_ms` do not change) and only
+    ///    `updated_at_ms`, `exit_code`, `duration_ms`, `started_at_ms` and `completed_at_ms`
+    ///    are overwritten with the new values.
+    /// 2. Upsert `command_metadata` for that row. A first sighting starts at `run_count = 1`;
+    ///    a repeat increments `run_count` and refreshes `last_seen_at_ms`, `last_exit_code`
+    ///    and `last_duration_ms`.
+    /// 3. Insert a `command_queue` row (default kind `embedding`, status `pending`). This
+    ///    happens on every call, including repeats of an already known command.
+    ///
+    /// This method does not apply [`should_ingest`](crate::filter::should_ingest); callers are
+    /// expected to filter before inserting.
+    ///
+    /// # Errors
+    ///
+    /// Besides ordinary SQLite failures, the insert fails with a foreign-key violation if
+    /// `command.session_id` does not refer to an existing session (see [`Self::insert_session`]).
     pub fn insert_command(&self, command: &NewCommand) -> DbResult<()> {
         let normalized_command = normalize_command(&command.command);
         let hash = content_hash(&command.command, &command.cwd);
@@ -177,6 +232,10 @@ impl Database {
         Ok(())
     }
 
+    /// Return up to `limit` commands, most recently completed first.
+    ///
+    /// Ordering is by `completed_at_ms` descending. The result is empty when the table has no
+    /// rows or `limit` is `0`.
     pub fn list_recent_commands(&self, limit: u32) -> DbResult<Vec<CommandRecord>> {
         let mut stmt = self.connection.prepare(
             r#"
@@ -223,6 +282,10 @@ impl Database {
         Ok(commands)
     }
 
+    /// Return the number of rows in the `commands` table.
+    ///
+    /// Each distinct (normalized command, cwd) pair is one row, so repeated runs of the same
+    /// command in the same directory count once (see [`Self::insert_command`]).
     pub fn count_commands(&self) -> DbResult<u64> {
         let count: u64 = self
             .connection
@@ -232,9 +295,10 @@ impl Database {
 
     /// List all commands as `(id, command_text)` pairs for the embedding indexer.
     ///
-    /// Returns every unique command in the database.  The indexer
-    /// cross-references these IDs against the vector store to find
-    /// un-indexed commands.
+    /// Returns every unique command in the database, oldest first (ordered by
+    /// `completed_at_ms` ascending).  The indexer cross-references these IDs against the
+    /// vector store to find un-indexed commands. Rows that fail to decode are skipped
+    /// silently instead of failing the whole call.
     pub fn list_commands_for_indexing(&self) -> DbResult<Vec<(String, String)>> {
         let mut stmt = self
             .connection
@@ -251,6 +315,9 @@ impl Database {
     /// Look up command details by command ID.
     ///
     /// Used by semantic search to enrich vector matches with metadata.
+    ///
+    /// Returns `Ok(None)` when no command has that `id` (the id is the raw string from
+    /// [`CommandId::as_str`]).
     pub fn get_command_by_id(&self, id: &str) -> DbResult<Option<CommandRecord>> {
         self.connection
             .query_row(
@@ -293,6 +360,9 @@ impl Database {
             .map_err(Into::into)
     }
 
+    /// Look up a session by id.
+    ///
+    /// Returns `Ok(None)` when no session with that id exists.
     pub fn get_session(&self, id: &SessionId) -> DbResult<Option<SessionRecord>> {
         self.connection
             .query_row(
@@ -318,6 +388,10 @@ impl Database {
             .map_err(Into::into)
     }
 
+    /// Look up a command by its `content_hash`.
+    ///
+    /// `hash` is the hex digest produced by [`content_hash`] for a (command, cwd) pair.
+    /// Returns `Ok(None)` when no command has that hash.
     pub fn get_command_by_hash(&self, hash: &str) -> DbResult<Option<CommandRecord>> {
         self.connection
             .query_row(
@@ -363,7 +437,13 @@ impl Database {
     // ─── Phase 5 backward compat ─────────────────────────────────────────────
 
     /// Simple search (Phase 5 backward-compatible entry point).
-    /// Delegates to `search_commands_v2` with default options.
+    /// Delegates to [`Self::search_commands_v2`] with default options.
+    ///
+    /// Builds `SearchOptions::new(query).with_limit(limit)`, so there is no cwd boost,
+    /// ranking is not recency-only and the default
+    /// [`ScoringWeights`](crate::domain::ScoringWeights) apply. Returns at most `limit`
+    /// results, best first; see [`Self::search_commands_v2`] for the details, including
+    /// the empty-query behaviour and errors.
     pub fn search_commands(
         &self,
         query: &str,
@@ -382,11 +462,42 @@ impl Database {
     /// 2. Prefix scan (for short queries like "gi" → "git")
     /// 3. Edit-distance fuzzy matching (typo tolerance)
     ///
-    /// Scoring (configurable via `SearchOptions::weights`):
+    /// Scoring (configurable via `SearchOptions::weights`; percentages are the defaults):
     /// - 50% relevance (exact > prefix > partial > fuzzy)
     /// - 20% recency
     /// - 20% frequency
     /// - 10% cwd similarity
+    ///
+    /// # Behaviour
+    ///
+    /// - A query that is empty after trimming returns an empty `Vec` without touching the
+    ///   database.
+    /// - The FTS5 stage fetches up to `max(limit * 8, 200)` candidates. The prefix and
+    ///   fuzzy stage only runs when that left fewer than `limit` candidates; it scans
+    ///   the same number of most recent commands and skips any (command, cwd) pair that
+    ///   is already a candidate.
+    /// - Every candidate is then re-classified into a [`MatchKind`](crate::domain::MatchKind)
+    ///   from the lowercased query: `Exact` if it is a substring of the command or cwd,
+    ///   `Prefix` if it prefixes a whitespace-separated token of the command, otherwise
+    ///   `Partial`.
+    /// - With `opts.recent_only` the weights are ignored: candidates are sorted by
+    ///   `completed_at_ms` (newest first), cut to `limit`, and given linearly decreasing
+    ///   scores starting at `1.0`.
+    /// - Otherwise recency is min-max normalized across the candidate set, frequency is
+    ///   `(run_count - 1) / (max_run_count - 1)` (`0.0` when no candidate ran more than
+    ///   once), and cwd similarity is only computed when `opts.cwd` is set. Internal
+    ///   commands (see [`is_internal_command`](crate::filter::is_internal_command)) get
+    ///   a score of `0.0`. Results are sorted by score descending, ties broken by newest
+    ///   first, and truncated to `opts.limit`.
+    ///
+    /// This method does not update the search counters; use [`Self::record_search_performed`]
+    /// and [`Self::record_search_latency`] for that.
+    ///
+    /// # Errors
+    ///
+    /// Returns a SQLite error if a query fails. The query text is passed to FTS5 `MATCH`
+    /// as is (for queries of 3+ bytes), so a query FTS5 cannot parse, such as one with an
+    /// unbalanced `"` or a `-` that FTS5 reads as column syntax, is returned as an error.
     pub fn search_commands_v2(
         &self,
         opts: &crate::domain::SearchOptions,
@@ -656,6 +767,14 @@ impl Database {
     /// (e.g. `ggnmem %`, `history`, `clear`, `exit`).
     ///
     /// Disk compaction is handled by the explicit optimize path.
+    ///
+    /// A row matches when `command` starts with `ggnmem ` or `ggnmem-`, equals `ggnmem`,
+    /// or equals (trimmed, case-insensitive) one of `history`, `clear`, `exit`, `logout`
+    /// or `reset`. The `command_queue` and `command_metadata` deletes are best-effort:
+    /// their errors are ignored. Only the delete on `commands` can fail this call.
+    ///
+    /// This does not record the run in the cleanup history; [`Self::cleanup_by_mode`]
+    /// and [`Self::run_automatic_cleanup`] do that.
     pub fn cleanup_internal_commands(&self) -> DbResult<CleanupStats> {
         let before = self.count_commands()?;
 
@@ -694,6 +813,16 @@ impl Database {
     // ─── Phase 11: Database Optimization ─────────────────────────────────────
 
     /// Run `PRAGMA optimize` + `ANALYZE` and compact free pages when safe.
+    ///
+    /// `VACUUM` only runs when the connection is in autocommit mode (no open
+    /// transaction) and the freelist is not empty. If `VACUUM` fails because the database
+    /// is busy or locked, that is not an error: `vacuum_ran` is simply `false`. Any other
+    /// `VACUUM` error is returned. Afterwards a passive WAL checkpoint is run and the
+    /// current time is stored as the last optimize time (shown by [`Self::db_stats`] and
+    /// [`Self::usage_stats`]).
+    ///
+    /// Returns the database size (page size times page count) before and after, the
+    /// elapsed time and whether `VACUUM` ran.
     pub fn optimize(&self) -> DbResult<crate::domain::OptimizeStats> {
         let before_size_bytes = self.database_size_bytes()?;
         let start = Instant::now();
@@ -734,12 +863,26 @@ impl Database {
     }
 
     /// Run `VACUUM` to defragment and compact the database file.
+    ///
+    /// Unlike [`Self::optimize`] this always issues `VACUUM`, does not treat a busy or
+    /// locked database specially and does not update the last optimize time.
+    ///
+    /// # Errors
+    ///
+    /// Returns the SQLite error if `VACUUM` fails, for example when called inside a
+    /// transaction or while another connection holds a lock.
     pub fn vacuum(&self) -> DbResult<()> {
         self.connection.execute_batch("VACUUM;")?;
         Ok(())
     }
 
     /// Collect database-level statistics.
+    ///
+    /// Gathers row counts for `commands`, `sessions`, `command_metadata` and
+    /// `command_queue`, the SQLite page figures, and the last optimize time.
+    /// `db_size_bytes` is `page_size * page_count`. The FTS row count is best-effort and
+    /// reads as `0` if that query fails. `duplicate_count_estimate` is the sum of
+    /// `run_count - 1` over commands that ran more than once.
     pub fn db_stats(&self) -> DbResult<crate::domain::DbStats> {
         let command_count = self.count_commands()?;
         let session_count: u64 =
@@ -782,6 +925,14 @@ impl Database {
     }
 
     /// Collect high-level usage statistics for `ggnmem stats`.
+    ///
+    /// Combines command and session counts, the number of distinct normalized commands,
+    /// the ten most-run commands (`most_used`, by `run_count`, rows that fail to decode
+    /// are skipped), the database size, the last cleanup and optimize details, and the
+    /// search counters recorded through [`Self::record_search_performed`],
+    /// [`Self::record_search_latency`] and [`Self::record_semantic_search`].
+    /// `avg_search_latency_ms` is the total recorded latency divided by
+    /// `searches_performed` (integer division, `0` when no search was recorded).
     pub fn usage_stats(&self) -> DbResult<crate::domain::UsageStats> {
         let total_commands = self.count_commands()?;
         let unique_commands: u64 = self.connection.query_row(
@@ -844,6 +995,11 @@ impl Database {
     // ─── Phase 11: Cleanup Engine ────────────────────────────────────────────
 
     /// Remove commands that failed (non-zero exit code) and were only run once.
+    ///
+    /// A command counts as failed when `exit_code` is set and not `0`; commands with no
+    /// recorded exit code are kept. "Run once" means `run_count = 1`, or no
+    /// `command_metadata` row at all. Matching rows in `command_queue` and
+    /// `command_metadata` are deleted too. Does not record the run in the cleanup history.
     pub fn cleanup_failed(&self) -> DbResult<CleanupStats> {
         let before = self.count_commands()?;
 
@@ -878,6 +1034,11 @@ impl Database {
     }
 
     /// Remove commands older than the given number of days.
+    ///
+    /// The cutoff is now minus `days` times 24 hours; rows with `completed_at_ms` before
+    /// the cutoff are deleted together with their `command_queue` and `command_metadata`
+    /// rows. Passing `0` makes the cutoff "now", which removes everything already
+    /// completed. Does not record the run in the cleanup history.
     pub fn cleanup_older_than(&self, days: u32) -> DbResult<CleanupStats> {
         let before = self.count_commands()?;
         let cutoff_ms = crate::time::unix_epoch_millis() - (days as i64 * 24 * 60 * 60 * 1000);
@@ -904,6 +1065,10 @@ impl Database {
 
     /// Remove true duplicate rows (same content_hash appearing more than once).
     /// Should be rare because of the UNIQUE constraint, but handles edge cases.
+    ///
+    /// For each `content_hash` the row with the lowest `rowid` is kept and the others are
+    /// deleted, along with their `command_queue` and `command_metadata` rows. Does not
+    /// record the run in the cleanup history.
     pub fn cleanup_duplicates(&self) -> DbResult<CleanupStats> {
         let before = self.count_commands()?;
 
@@ -938,6 +1103,12 @@ impl Database {
 
     /// Enforce retention policy: remove commands older than max_age_days,
     /// then trim to max_commands if still over the limit.
+    ///
+    /// Both limits are optional: `max_age_days == 0` skips the age step and
+    /// `max_commands == 0` skips the count step. The count step keeps the `max_commands`
+    /// most recent rows by `completed_at_ms` and deletes the rest. Related
+    /// `command_queue` and `command_metadata` rows are removed in both steps. Does not
+    /// record the run in the cleanup history.
     pub fn cleanup_by_retention(
         &self,
         max_age_days: u32,
@@ -1008,6 +1179,14 @@ impl Database {
     }
 
     /// Dispatch cleanup based on the requested mode.
+    ///
+    /// Runs the matching `cleanup_*` method (see [`CleanupMode`](crate::domain::CleanupMode))
+    /// and, if it succeeds, stores the time and the removed/remaining counts as the last
+    /// cleanup via [`Self::record_cleanup`]. Returns the same [`CleanupStats`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of the chosen cleanup, or of recording the result.
     pub fn cleanup_by_mode(&self, mode: &crate::domain::CleanupMode) -> DbResult<CleanupStats> {
         use crate::domain::CleanupMode;
         let stats = match mode {
@@ -1025,6 +1204,11 @@ impl Database {
     }
 
     /// Run the daemon-owned automatic cleanup policy.
+    ///
+    /// Runs [`Self::cleanup_internal_commands`] and then
+    /// [`Self::cleanup_by_retention`] with the given limits, and records the combined
+    /// result as the last cleanup. In the returned stats `removed` is the sum of both
+    /// steps and `remaining` is the count after the retention step.
     pub fn run_automatic_cleanup(
         &self,
         max_age_days: u32,
@@ -1043,6 +1227,8 @@ impl Database {
     // ─── Phase 11: Hybrid Retention Scheduling ───────────────────────────────
 
     /// Get the timestamp (ms since epoch) of the last cleanup run.
+    ///
+    /// Read from `retention_meta`; `0` means no cleanup has been recorded yet.
     pub fn get_last_cleanup_at_ms(&self) -> DbResult<i64> {
         self.connection
             .query_row(
@@ -1053,7 +1239,9 @@ impl Database {
             .map_err(Into::into)
     }
 
-    /// Update the last cleanup timestamp to now.
+    /// Update the last cleanup timestamp to `now_ms` (milliseconds since the Unix epoch).
+    ///
+    /// Writes the value to both `retention_meta` and `maintenance_meta`.
     pub fn set_last_cleanup_at_ms(&self, now_ms: i64) -> DbResult<()> {
         self.connection.execute(
             "UPDATE retention_meta SET last_cleanup_at_ms = ?1 WHERE id = 1",
@@ -1066,6 +1254,11 @@ impl Database {
         Ok(())
     }
 
+    /// Store the outcome of a cleanup run for `ggnmem stats`.
+    ///
+    /// Sets the last cleanup time to `now_ms` (see [`Self::set_last_cleanup_at_ms`]) and saves
+    /// `stats.removed` and `stats.remaining` in `maintenance_meta`. Counts above `i64::MAX`
+    /// are clamped to `i64::MAX` before being stored.
     pub fn record_cleanup(&self, now_ms: i64, stats: CleanupStats) -> DbResult<()> {
         self.set_last_cleanup_at_ms(now_ms)?;
         let removed = stats.removed.min(i64::MAX as u64) as i64;
@@ -1083,6 +1276,10 @@ impl Database {
         Ok(())
     }
 
+    /// Increment the total number of searches performed by one.
+    ///
+    /// This is the denominator of the average search latency reported by
+    /// [`Self::usage_stats`].
     pub fn record_search_performed(&self) -> DbResult<()> {
         self.connection.execute(
             r#"
@@ -1097,6 +1294,11 @@ impl Database {
 
     /// Record search latency and whether it was a hybrid search.
     /// Uses a running-average approach: total_search_latency_ms / searches_performed.
+    ///
+    /// Adds `elapsed_ms` to the stored total latency and, when `is_hybrid` is `true`, also
+    /// increments the hybrid search counter. It does not increment the number of searches
+    /// performed, so call [`Self::record_search_performed`] separately for each search or
+    /// the average will be skewed.
     pub fn record_search_latency(&self, elapsed_ms: u64, is_hybrid: bool) -> DbResult<()> {
         let elapsed = elapsed_ms.min(i64::MAX as u64) as i64;
         if is_hybrid {
@@ -1123,6 +1325,9 @@ impl Database {
     }
 
     /// Record a standalone semantic search for stats tracking.
+    ///
+    /// Increments only the semantic search counter; the total search count and latency are
+    /// recorded through [`Self::record_search_performed`] and [`Self::record_search_latency`].
     pub fn record_semantic_search(&self) -> DbResult<()> {
         self.connection.execute(
             r#"
@@ -1239,6 +1444,9 @@ impl Database {
 
     /// Load all existing content hashes into a `HashSet` for fast deduplication
     /// during bulk imports.
+    ///
+    /// Rows that fail to decode are skipped silently. The set is meant to be passed to
+    /// [`Self::insert_command_batch`].
     pub fn list_all_content_hashes(&self) -> DbResult<std::collections::HashSet<String>> {
         let mut stmt = self
             .connection
@@ -1256,6 +1464,17 @@ impl Database {
     /// that hit the `ON CONFLICT` path). Commands whose `content_hash` is
     /// already in `existing_hashes` are skipped entirely to avoid the SQL
     /// round-trip.
+    ///
+    /// Unlike [`Self::insert_command`] this uses `INSERT OR IGNORE`, so a duplicate inside
+    /// `commands` itself is skipped (the first occurrence wins) rather than updating the
+    /// existing row. A `command_metadata` row is created for each inserted command, but no
+    /// `command_queue` row is. `existing_hashes` is only read; it is not updated with the
+    /// hashes inserted by this call.
+    ///
+    /// # Errors
+    ///
+    /// If any statement fails, the transaction is dropped and none of the batch is stored.
+    /// The call also fails when the connection is already inside a transaction.
     pub fn insert_command_batch(
         &self,
         commands: &[NewCommand],
