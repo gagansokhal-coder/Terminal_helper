@@ -6,7 +6,7 @@ use crate::{
     config::DatabaseConfig,
     connection,
     domain::{CommandId, CommandRecord, NewCommand, NewSession, SessionId, SessionRecord},
-    error::DbResult,
+    error::{DbError, DbResult},
     filter,
     hash::{content_hash, normalize_command},
 };
@@ -503,7 +503,29 @@ impl Database {
     }
 
     /// FTS5 trigram search for substring hits.
+    ///
+    /// The query is tried as FTS5 syntax first, so quoted phrases and operators
+    /// keep working. Terminal input like `--oneline` or `git "` is not valid
+    /// FTS5, so when SQLite rejects it the whole query is searched as literal
+    /// text instead.
     fn fts_search(&self, query: &str, limit: u32) -> DbResult<Vec<crate::domain::SearchResult>> {
+        match self.fts_match(query, limit) {
+            // FTS5 reports a bad query with the generic SQLITE_ERROR code.
+            Err(DbError::Sqlite(rusqlite::Error::SqliteFailure(error, _)))
+                if error.code == ErrorCode::Unknown =>
+            {
+                let literal = format!("\"{}\"", query.replace('"', "\"\""));
+                self.fts_match(&literal, limit)
+            }
+            result => result,
+        }
+    }
+
+    fn fts_match(
+        &self,
+        match_expression: &str,
+        limit: u32,
+    ) -> DbResult<Vec<crate::domain::SearchResult>> {
         use crate::domain::{MatchKind, SearchResult};
 
         let mut stmt = self.connection.prepare(
@@ -526,7 +548,7 @@ impl Database {
 
         let rows = stmt.query_map(
             named_params! {
-                ":query": query,
+                ":query": match_expression,
                 ":fetch_limit": limit,
             },
             |row| {
